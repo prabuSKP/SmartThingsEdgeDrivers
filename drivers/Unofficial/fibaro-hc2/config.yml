@@ -1,0 +1,7 @@
+name: 'Fibaro HC2'
+packageKey: 'fibaro-hc2'
+permissions:
+  lan: {}
+  discovery: {}
+description: "SmartThings Edge driver for Fibaro HC2 Local API devices"
+vendorSupportInformation: "https://support.smartthings.com"

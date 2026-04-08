@@ -1,0 +1,44 @@
+name: hc2-bridge
+components:
+  - id: main
+    capabilities:
+      - id: refresh
+        version: 1
+    categories:
+      - name: Bridges
+preferences:
+  - name: host
+    title: HC2 Host
+    description: IPv4 address or hostname of the Fibaro HC2 controller.
+    required: false
+    preferenceType: string
+    definition:
+      default: ""
+  - name: port
+    title: HC2 Port
+    description: HTTP port exposed by the Fibaro HC2 Local API.
+    required: false
+    preferenceType: integer
+    definition:
+      default: 80
+  - name: username
+    title: HC2 Username
+    description: Username for Fibaro HC2 Basic Auth.
+    required: false
+    preferenceType: string
+    definition:
+      default: ""
+  - name: password
+    title: HC2 Password
+    description: Password for Fibaro HC2 Basic Auth.
+    required: false
+    preferenceType: string
+    definition:
+      default: ""
+  - name: pollInterval
+    title: Poll Interval (Seconds)
+    description: Interval for inventory and state sync. Lower values increase LAN traffic.
+    required: false
+    preferenceType: integer
+    definition:
+      default: 30
