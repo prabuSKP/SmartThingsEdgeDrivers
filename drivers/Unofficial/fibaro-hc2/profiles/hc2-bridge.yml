@@ -14,7 +14,7 @@ preferences:
     preferenceType: string
     definition:
       stringType: text
-      minLength: 1
+      minLength: 0
       maxLength: 255
       default: ""
   - name: port
@@ -31,7 +31,7 @@ preferences:
     preferenceType: string
     definition:
       stringType: text
-      minLength: 1
+      minLength: 0
       maxLength: 255
       default: ""
   - name: password
@@ -41,7 +41,7 @@ preferences:
     preferenceType: string
     definition:
       stringType: password
-      minLength: 1
+      minLength: 0
       maxLength: 255
       default: ""
   - name: pollInterval
