@@ -130,7 +130,7 @@ function hc3.command_refresh_attempts(status)
     return 3
   end
 
-  return 1
+  return 4
 end
 
 return hc3

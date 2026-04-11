@@ -12,6 +12,47 @@ local sync = {}
 
 local DEFAULT_POLL_INTERVAL = 30
 
+local function value_matches_switch(value, expected_on)
+  local is_on = utils.value_is_truthy(value)
+  return expected_on and is_on or (not expected_on and not is_on)
+end
+
+local function value_matches_level(value, expected_level)
+  local numeric_value = utils.safe_tonumber(value) or 0
+  return math.abs(numeric_value - expected_level) <= 1
+end
+
+local function expected_state_matcher(kind, action_name, args)
+  if kind == "switch" then
+    if action_name == "turnOn" then
+      return function(normalized_device)
+        return value_matches_switch(normalized_device.value, true)
+      end
+    elseif action_name == "turnOff" then
+      return function(normalized_device)
+        return value_matches_switch(normalized_device.value, false)
+      end
+    end
+  elseif kind == "dimmer" then
+    if action_name == "setValue" then
+      local expected = utils.clamp(utils.safe_tonumber(args and args[1]) or 0, 0, 99)
+      return function(normalized_device)
+        return value_matches_level(normalized_device.level or normalized_device.value, expected)
+      end
+    elseif action_name == "turnOn" then
+      return function(normalized_device)
+        return (utils.safe_tonumber(normalized_device.level or normalized_device.value) or 0) > 0
+      end
+    elseif action_name == "turnOff" then
+      return function(normalized_device)
+        return value_matches_level(normalized_device.level or normalized_device.value, 0)
+      end
+    end
+  end
+
+  return nil
+end
+
 local function normalize_scheme(raw_value)
   local value = utils.trim(raw_value or "")
   if type(value) == "string" then
@@ -143,6 +184,21 @@ local function emit_child_state(device, normalized_device, kind)
   end
 end
 
+local function refresh_child_with_api(api, bridge, child, adapter, hc2_device_id, kind)
+  local payload, err, status = api:get_device(hc2_device_id)
+
+  if err ~= nil or status ~= 200 then
+    child:offline()
+    bridge:offline()
+    return nil, err or ("unexpected status " .. tostring(status)), nil
+  end
+
+  local normalized_device = adapter.normalize_device(payload)
+  bridge:online()
+  emit_child_state(child, normalized_device, kind)
+  return true, nil, normalized_device
+end
+
 local function ensure_child_device(driver, bridge, mapped, existing_child)
   if existing_child then
     emit_child_state(existing_child, mapped.raw, mapped.kind)
@@ -235,18 +291,9 @@ function sync.refresh_child(driver, child)
   local adapter = controller_for_bridge(bridge)
   local hc2_device_id = child:get_field(fields.HC2_DEVICE_ID) or utils.device_id_from_child_key(child.parent_assigned_child_key)
   local kind = child:get_field(fields.HC2_DEVICE_KIND) or "generic-sensor"
-  local payload, err, status = api:get_device(hc2_device_id)
+  local ok, refresh_err, normalized_device = refresh_child_with_api(api, bridge, child, adapter, hc2_device_id, kind)
   api:shutdown()
-
-  if err ~= nil or status ~= 200 then
-    child:offline()
-    bridge:offline()
-    return nil, err or ("unexpected status " .. tostring(status))
-  end
-
-  bridge:online()
-  emit_child_state(child, adapter.normalize_device(payload), kind)
-  return true, nil
+  return ok, refresh_err, normalized_device
 end
 
 function sync.execute_child_action(driver, child, action_name, args)
@@ -264,32 +311,38 @@ function sync.execute_child_action(driver, child, action_name, args)
 
   local adapter = controller_for_bridge(bridge)
   local hc2_device_id = child:get_field(fields.HC2_DEVICE_ID) or utils.device_id_from_child_key(child.parent_assigned_child_key)
+  local kind = child:get_field(fields.HC2_DEVICE_KIND) or "generic-sensor"
   local _, err, status = api:call_action(hc2_device_id, action_name, adapter.build_action_body(args))
-  api:shutdown()
 
   if err ~= nil or (status ~= 200 and status ~= 202 and status ~= 204) then
+    api:shutdown()
     child:offline()
     bridge:offline()
     return nil, err or ("unexpected status " .. tostring(status))
   end
 
   bridge:online()
-  local attempts = adapter.command_refresh_attempts(status)
+  local matcher = expected_state_matcher(kind, action_name, args)
+  local attempts = math.max(adapter.command_refresh_attempts(status), matcher and 4 or 1)
   local last_err = nil
 
   for attempt = 1, attempts do
     if attempt > 1 then
-      socket.sleep(attempt - 1)
+      socket.sleep(0.4 * attempt)
     end
 
-    local ok, refresh_err = sync.refresh_child(driver, child)
-    if ok then
+    local ok, refresh_err, normalized_device = refresh_child_with_api(api, bridge, child, adapter, hc2_device_id, kind)
+    if ok and (matcher == nil or matcher(normalized_device)) then
+      api:shutdown()
       return true, nil
     end
 
-    last_err = refresh_err
+    if refresh_err ~= nil then
+      last_err = refresh_err
+    end
   end
 
+  api:shutdown()
   return nil, last_err or "refresh after action failed"
 end
 
