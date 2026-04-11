@@ -6,10 +6,26 @@ local function has_action(actions, action_name)
   return type(actions) == "table" and actions[action_name] ~= nil
 end
 
+local function has_interface(interfaces, needle)
+  if type(interfaces) ~= "table" then
+    return false
+  end
+
+  for _, value in ipairs(interfaces) do
+    if tostring(value) == needle then
+      return true
+    end
+  end
+
+  return false
+end
+
 local function has_value(device)
-  return type(device) == "table"
-    and type(device.properties) == "table"
-    and device.properties.value ~= nil
+  return type(device) == "table" and device.value ~= nil
+end
+
+local function contains(haystack, needle)
+  return tostring(haystack or ""):find(needle, 1, true) ~= nil
 end
 
 function mapper.map_device(device)
@@ -17,9 +33,19 @@ function mapper.map_device(device)
     return nil, "invalid device payload"
   end
 
+  if device.is_gateway then
+    return nil, "controller device"
+  end
+
   local actions = device.actions or {}
   local device_type = tostring(device.type or "")
-  local label = device.name or ("Fibaro Device " .. tostring(device.id))
+  local base_type = tostring(device.base_type or "")
+  local device_role = tostring(device.device_role or "")
+  local interfaces = device.interfaces or {}
+  local lowered_type = device_type:lower()
+  local lowered_base_type = base_type:lower()
+  local lowered_role = device_role:lower()
+  local label = device.label or ("Fibaro Device " .. tostring(device.id))
 
   if has_action(actions, "setValue") then
     return {
@@ -45,7 +71,11 @@ function mapper.map_device(device)
     }
   end
 
-  if device_type:find("motionSensor", 1, true) then
+  if contains(lowered_type, "motionsensor")
+    or contains(lowered_base_type, "motionsensor")
+    or contains(lowered_role, "motion")
+    or has_interface(interfaces, "motionSensor")
+  then
     return {
       id = device.id,
       key = utils.child_key_for_id(device.id),
@@ -57,7 +87,17 @@ function mapper.map_device(device)
     }
   end
 
-  if device_type:find("doorSensor", 1, true) or device_type:find("windowSensor", 1, true) then
+  if contains(lowered_type, "doorsensor")
+    or contains(lowered_type, "windowsensor")
+    or contains(lowered_type, "doorwindowsensor")
+    or contains(lowered_base_type, "doorsensor")
+    or contains(lowered_base_type, "windowsensor")
+    or contains(lowered_base_type, "doorwindowsensor")
+    or contains(lowered_role, "door")
+    or contains(lowered_role, "window")
+    or has_interface(interfaces, "contactSensor")
+    or has_interface(interfaces, "doorWindowSensor")
+  then
     return {
       id = device.id,
       key = utils.child_key_for_id(device.id),

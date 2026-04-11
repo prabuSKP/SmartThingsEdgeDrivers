@@ -52,16 +52,27 @@ local function copy_headers(source)
 end
 
 local function build_base_url(config)
-  return string.format("http://%s:%d", config.host, config.port)
+  return string.format("%s://%s:%d", config.scheme or "http", config.host, config.port)
 end
 
 function fibaro_api.new(config, label)
   local auth_header = "Basic " .. base64.encode(string.format("%s:%s", config.username, config.password))
   local headers = copy_headers(DEFAULT_HEADERS)
   headers["Authorization"] = auth_header
+  headers["X-Fibaro-Version"] = "2"
+
+  local socket_builder = utils.labeled_socket_builder(
+    label or "Fibaro HC",
+    config.scheme == "https" and {
+      mode = "client",
+      protocol = "any",
+      verify = "none",
+      options = "all",
+    } or nil
+  )
 
   return setmetatable({
-    client = RestClient.new(build_base_url(config), utils.labeled_socket_builder(label or "Fibaro HC2")),
+    client = RestClient.new(build_base_url(config), socket_builder),
     headers = headers,
   }, fibaro_api)
 end
@@ -82,9 +93,26 @@ function fibaro_api:get_device(device_id)
   return process_response(response, err)
 end
 
-function fibaro_api:call_action(device_id, action_name, args)
-  local payload = json.encode({ args = args or {} })
-  log.info(string.format("Calling HC2 action %s for device %s", tostring(action_name), tostring(device_id)))
+function fibaro_api:get_scenes()
+  local response, err = self.client:get("/api/scenes", self.headers, retry_fn(3))
+  return process_response(response, err)
+end
+
+function fibaro_api:execute_scene(scene_id, body)
+  local payload = json.encode(body or {})
+  log.info(string.format("Executing Fibaro scene %s", tostring(scene_id)))
+  local response, err = self.client:post(
+    string.format("/api/scenes/%s/execute", tostring(scene_id)),
+    payload,
+    self.headers,
+    retry_fn(3)
+  )
+  return process_response(response, err)
+end
+
+function fibaro_api:call_action(device_id, action_name, body)
+  local payload = json.encode(body or { args = {} })
+  log.info(string.format("Calling Fibaro action %s for device %s", tostring(action_name), tostring(device_id)))
   local response, err = self.client:post(
     string.format("/api/devices/%s/action/%s", tostring(device_id), tostring(action_name)),
     payload,

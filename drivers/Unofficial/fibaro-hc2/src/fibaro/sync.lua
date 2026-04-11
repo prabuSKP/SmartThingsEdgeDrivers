@@ -1,6 +1,8 @@
 local capabilities = require "st.capabilities"
+local socket = require "cosock.socket"
 local log = require "log"
 
+local adapter_lib = require "fibaro.adapter"
 local fields = require "fields"
 local FibaroApi = require "fibaro.api"
 local mapper = require "fibaro.mapper"
@@ -10,6 +12,19 @@ local sync = {}
 
 local DEFAULT_POLL_INTERVAL = 30
 
+local function normalize_scheme(raw_value)
+  local value = utils.trim(raw_value or "")
+  if type(value) == "string" then
+    value = value:lower()
+  end
+
+  if value == "https" then
+    return "https"
+  end
+
+  return "http"
+end
+
 local function get_poll_interval(device)
   local poll_value = utils.safe_tonumber(device.preferences and device.preferences.pollInterval) or DEFAULT_POLL_INTERVAL
   return math.max(10, poll_value)
@@ -17,16 +32,18 @@ end
 
 local function get_bridge_config(bridge)
   local prefs = bridge.preferences or {}
+  local scheme = normalize_scheme(prefs.scheme)
   local host = utils.trim(prefs.host or "")
   local username = utils.trim(prefs.username or "")
   local password = prefs.password or ""
-  local port = utils.safe_tonumber(prefs.port) or 80
+  local port = utils.safe_tonumber(prefs.port) or (scheme == "https" and 443 or 80)
 
   if host == "" or username == "" or password == "" then
     return nil, "bridge preferences incomplete"
   end
 
   return {
+    scheme = scheme,
     host = host,
     port = port,
     username = username,
@@ -43,16 +60,23 @@ local function api_for_bridge(bridge)
   return FibaroApi.new(config, bridge.label or bridge.device_network_id), nil
 end
 
-local function normalize_device_list(payload)
-  if type(payload) ~= "table" then
-    return {}
+local function controller_for_bridge(bridge, payload)
+  local config, _ = get_bridge_config(bridge)
+  local scheme = config and config.scheme or "http"
+
+  if payload ~= nil then
+    local adapter = adapter_lib.detect_devices(payload, scheme)
+    bridge:set_field(fields.CONTROLLER_KIND, adapter.NAME, { persist = true })
+    return adapter
   end
 
-  if payload.devices and type(payload.devices) == "table" then
-    return payload.devices
+  local adapter_name = bridge:get_field(fields.CONTROLLER_KIND)
+  local adapter = adapter_name and adapter_lib.for_name(adapter_name) or nil
+  if adapter ~= nil then
+    return adapter
   end
 
-  return payload
+  return adapter_lib.default_for_scheme(scheme)
 end
 
 local function child_devices_for_bridge(driver, bridge)
@@ -95,20 +119,19 @@ function sync.apply_pending_child_metadata(driver, device)
   driver.datastore.pending_child_data[cache_key] = nil
 end
 
-local function emit_child_state(device, raw_device, kind)
-  local props = raw_device.properties or {}
-  if props.dead == true then
+local function emit_child_state(device, normalized_device, kind)
+  if normalized_device.dead == true then
     device:offline()
   else
     device:online()
   end
 
-  local value = props.value
+  local value = normalized_device.value
   if kind == "switch" then
     local event = utils.value_is_truthy(value) and capabilities.switch.switch.on() or capabilities.switch.switch.off()
     device:emit_event(event)
   elseif kind == "dimmer" then
-    local numeric_value = utils.safe_tonumber(value) or 0
+    local numeric_value = normalized_device.level or 0
     device:emit_event(numeric_value > 0 and capabilities.switch.switch.on() or capabilities.switch.switch.off())
     device:emit_event(capabilities.switchLevel.level(utils.clamp(math.floor(numeric_value + 0.5), 0, 99)))
   elseif kind == "contact" then
@@ -140,7 +163,7 @@ local function ensure_child_device(driver, bridge, mapped, existing_child)
 
   local success, err = driver:try_create_device(metadata)
   if not success then
-    log.error(string.format("Failed to create HC2 child %s: %s", mapped.key, tostring(err)))
+    log.error(string.format("Failed to create Fibaro child %s: %s", mapped.key, tostring(err)))
   end
 
   return nil
@@ -157,7 +180,7 @@ end
 function sync.sync_bridge_inventory(driver, bridge)
   local api, api_err = api_for_bridge(bridge)
   if api == nil then
-    log.warn(string.format("Skipping bridge sync for %s: %s", bridge.label, tostring(api_err)))
+    log.warn(string.format("Skipping Fibaro bridge sync for %s: %s", bridge.label, tostring(api_err)))
     bridge:offline()
     return nil, api_err
   end
@@ -170,23 +193,25 @@ function sync.sync_bridge_inventory(driver, bridge)
   end
 
   bridge:online()
-  local discovered = normalize_device_list(payload)
+  local adapter = controller_for_bridge(bridge, payload)
+  local discovered = adapter.normalize_device_list(payload)
   local children_by_key = child_devices_for_bridge(driver, bridge)
   local seen = {}
 
   for _, raw_device in ipairs(discovered) do
-    local mapped, map_err = mapper.map_device(raw_device)
+    local normalized_device = adapter.normalize_device(raw_device)
+    local mapped, map_err = mapper.map_device(normalized_device)
     if mapped ~= nil then
       seen[mapped.key] = true
       ensure_child_device(driver, bridge, mapped, children_by_key[mapped.key])
     else
-      log.debug(string.format("Skipping HC2 device %s: %s", tostring(raw_device.id), tostring(map_err)))
+      log.debug(string.format("Skipping Fibaro device %s: %s", tostring(raw_device.id), tostring(map_err)))
     end
   end
 
   for child_key, child in pairs(children_by_key) do
     if not seen[child_key] then
-      log.info(string.format("Deleting stale HC2 child %s", child_key))
+      log.info(string.format("Deleting stale Fibaro child %s", child_key))
       delete_child(driver, child)
     end
   end
@@ -207,6 +232,7 @@ function sync.refresh_child(driver, child)
     return nil, api_err
   end
 
+  local adapter = controller_for_bridge(bridge)
   local hc2_device_id = child:get_field(fields.HC2_DEVICE_ID) or utils.device_id_from_child_key(child.parent_assigned_child_key)
   local kind = child:get_field(fields.HC2_DEVICE_KIND) or "generic-sensor"
   local payload, err, status = api:get_device(hc2_device_id)
@@ -219,7 +245,7 @@ function sync.refresh_child(driver, child)
   end
 
   bridge:online()
-  emit_child_state(child, payload, kind)
+  emit_child_state(child, adapter.normalize_device(payload), kind)
   return true, nil
 end
 
@@ -236,8 +262,9 @@ function sync.execute_child_action(driver, child, action_name, args)
     return nil, api_err
   end
 
+  local adapter = controller_for_bridge(bridge)
   local hc2_device_id = child:get_field(fields.HC2_DEVICE_ID) or utils.device_id_from_child_key(child.parent_assigned_child_key)
-  local _, err, status = api:call_action(hc2_device_id, action_name, args)
+  local _, err, status = api:call_action(hc2_device_id, action_name, adapter.build_action_body(args))
   api:shutdown()
 
   if err ~= nil or (status ~= 200 and status ~= 202 and status ~= 204) then
@@ -247,7 +274,23 @@ function sync.execute_child_action(driver, child, action_name, args)
   end
 
   bridge:online()
-  return sync.refresh_child(driver, child)
+  local attempts = adapter.command_refresh_attempts(status)
+  local last_err = nil
+
+  for attempt = 1, attempts do
+    if attempt > 1 then
+      socket.sleep(attempt - 1)
+    end
+
+    local ok, refresh_err = sync.refresh_child(driver, child)
+    if ok then
+      return true, nil
+    end
+
+    last_err = refresh_err
+  end
+
+  return nil, last_err or "refresh after action failed"
 end
 
 local function cancel_bridge_timer(bridge)
@@ -270,7 +313,7 @@ function sync.reschedule_bridge_poll(driver, bridge)
     function()
       sync.sync_bridge_inventory(driver, bridge)
     end,
-    "Fibaro HC2 inventory poll"
+    "Fibaro HC inventory poll"
   )
 
   bridge:set_field(fields.POLL_TIMER, timer, { persist = false })
