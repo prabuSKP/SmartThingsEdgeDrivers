@@ -11,15 +11,15 @@ function discovery.discover(driver, _, _)
     end
   end
 
-  log.info("Creating manual Fibaro HC2 bridge placeholder")
+  log.info("Creating manual Fibaro HC bridge placeholder")
   driver:try_create_device({
     type = "LAN",
     device_network_id = BRIDGE_DNI,
-    label = "Fibaro HC2 Bridge",
+    label = "Fibaro HC Bridge",
     profile = "hc2-bridge",
     manufacturer = "Fibaro",
-    model = "HC2",
-    vendor_provided_label = "Fibaro HC2 Bridge",
+    model = "HC",
+    vendor_provided_label = "Fibaro HC Bridge",
   })
 end
 

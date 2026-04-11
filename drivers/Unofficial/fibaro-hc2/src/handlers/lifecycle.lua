@@ -15,7 +15,7 @@ function lifecycle.init(driver, device)
     sync.reschedule_bridge_poll(driver, device)
     local ok, err = sync.sync_bridge_inventory(driver, device)
     if not ok and err then
-      log.info(string.format("Bridge %s initialized without active HC2 connection: %s", device.label, tostring(err)))
+      log.info(string.format("Bridge %s initialized without active Fibaro connection: %s", device.label, tostring(err)))
     end
   else
     sync.apply_pending_child_metadata(driver, device)

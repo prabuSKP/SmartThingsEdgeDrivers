@@ -7,9 +7,19 @@ components:
     categories:
       - name: Bridges
 preferences:
+  - name: scheme
+    title: Protocol
+    description: Use `http` for HC2 or `https` for HC3 when local TLS is enabled.
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 5
+      default: "http"
   - name: host
-    title: HC2 Host
-    description: IPv4 address or hostname of the Fibaro HC2 controller.
+    title: Fibaro Host
+    description: IPv4 address or hostname of the Fibaro HC2 or HC3 controller.
     required: false
     preferenceType: string
     definition:
@@ -18,15 +28,18 @@ preferences:
       maxLength: 255
       default: ""
   - name: port
-    title: HC2 Port
-    description: HTTP port exposed by the Fibaro HC2 Local API.
+    title: Fibaro Port
+    description: Local API port. Leave empty to use `80` for HTTP or `443` for HTTPS.
     required: false
-    preferenceType: integer
+    preferenceType: string
     definition:
-      default: 80
+      stringType: text
+      minLength: 0
+      maxLength: 5
+      default: ""
   - name: username
-    title: HC2 Username
-    description: Username for Fibaro HC2 Basic Auth.
+    title: Fibaro Username
+    description: Username for Fibaro HC2 or HC3 Basic Auth.
     required: false
     preferenceType: string
     definition:
@@ -35,8 +48,8 @@ preferences:
       maxLength: 255
       default: ""
   - name: password
-    title: HC2 Password
-    description: Password for Fibaro HC2 Basic Auth.
+    title: Fibaro Password
+    description: Password for Fibaro HC2 or HC3 Basic Auth.
     required: false
     preferenceType: string
     definition:

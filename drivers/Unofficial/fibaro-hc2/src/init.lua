@@ -28,5 +28,5 @@ if fibaro_hc2.datastore.pending_child_data == nil then
   fibaro_hc2.datastore.pending_child_data = {}
 end
 
-log.info("Starting Fibaro HC2 driver")
+log.info("Starting Fibaro HC driver")
 fibaro_hc2:run()
