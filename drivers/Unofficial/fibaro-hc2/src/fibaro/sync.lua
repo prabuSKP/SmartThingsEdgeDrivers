@@ -331,6 +331,14 @@ function sync.execute_child_action(driver, child, action_name, args)
       socket.sleep(0.4 * attempt)
     end
 
+    log.info(string.format(
+      "Post-action refresh attempt %d/%d for child %s (device_id=%s)",
+      attempt,
+      attempts,
+      tostring(child.label),
+      tostring(hc2_device_id)
+    ))
+
     local ok, refresh_err, normalized_device = refresh_child_with_api(api, bridge, child, adapter, hc2_device_id, kind)
     if ok and (matcher == nil or matcher(normalized_device)) then
       api:shutdown()

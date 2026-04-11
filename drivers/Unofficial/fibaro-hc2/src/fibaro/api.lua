@@ -84,11 +84,13 @@ function fibaro_api:shutdown()
 end
 
 function fibaro_api:get_devices()
+  log.info("Requesting Fibaro inventory: GET /api/devices")
   local response, err = self.client:get("/api/devices", self.headers, retry_fn(3))
   return process_response(response, err)
 end
 
 function fibaro_api:get_device(device_id)
+  log.info(string.format("Requesting Fibaro device state: GET /api/devices/%s", tostring(device_id)))
   local response, err = self.client:get(string.format("/api/devices/%s", tostring(device_id)), self.headers, retry_fn(3))
   return process_response(response, err)
 end
