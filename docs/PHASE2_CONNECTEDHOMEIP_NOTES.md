@@ -58,9 +58,9 @@ The Phase 2 host simulator now:
 - Initializes standalone DEM behavior on endpoint 2
 - Initializes Electrical Meter + Commodity Metering on endpoint 3
 - Allows Meter Identification to bind on the Utility Meter endpoint instead of assuming endpoint 1
-- Seeds static EPM/EEM values so the SmartThings driver can commission, read, and subscribe against all modeled endpoints
+- Implements timer-driven telemetry (10s intervals) for dynamic voltage, current, and active power reporting, along with continuous energy accumulation.
 
 ## Remaining Work
 
-- The simulator currently seeds fixed readings; it is not yet a timer-driven telemetry simulator.
-- Linux/WSL build and commissioning verification still needs to be run in the actual Linux environment.
+- **Linux/WSL Build Execution**: The current development setup is Windows. Compiling and running the Linux-based `chip-phase2-energy-simulator-app` target remains an open item for the future when a Linux or WSL environment is available.
+- Electrical Utility Meter (`0x0511`) driver fingerprint/profile is not yet implemented (Meter Identification has no standard SmartThings capability mapping).

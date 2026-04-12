@@ -60,6 +60,7 @@ local SOLAR_POWER_DEVICE_TYPE_ID = 0x0017
 local BATTERY_STORAGE_DEVICE_TYPE_ID = 0x0018
 local ELECTRICAL_SENSOR_DEVICE_TYPE_ID = 0x0510
 local DEVICE_ENERGY_MANAGEMENT_DEVICE_TYPE_ID = 0x050D
+local ELECTRICAL_METER_DEVICE_TYPE_ID = 0x0514
 
 local function get_endpoints_for_dt(device, device_type)
   local endpoints = {}
@@ -86,6 +87,10 @@ local find_default_endpoint = function(device)
   local electrical_sensor_eps = get_endpoints_for_dt(device, ELECTRICAL_SENSOR_DEVICE_TYPE_ID) or {}
   if #electrical_sensor_eps > 0 then
     return electrical_sensor_eps[1]
+  end
+  local electrical_meter_eps = get_endpoints_for_dt(device, ELECTRICAL_METER_DEVICE_TYPE_ID) or {}
+  if #electrical_meter_eps > 0 then
+    return electrical_meter_eps[1]
   end
   local dem_eps = get_endpoints_for_dt(device, DEVICE_ENERGY_MANAGEMENT_DEVICE_TYPE_ID) or {}
   if #dem_eps > 0 then
@@ -310,6 +315,14 @@ local function do_configure(driver, device)
     local profile_name = has_voltage and "electrical-sensor-voltage-current" or "electrical-sensor"
     device.log.info_with({ hub_logs = true }, string.format("Updating device profile to %s.", profile_name))
     device:try_update_metadata({ profile = profile_name })
+    return
+  end
+
+  -- Standalone Electrical Meter profile selection
+  local electrical_meter_eps = get_endpoints_for_dt(device, ELECTRICAL_METER_DEVICE_TYPE_ID) or {}
+  if #evse_eps == 0 and #electrical_meter_eps > 0 then
+    device.log.info_with({ hub_logs = true }, "Updating device profile to electrical-meter.")
+    device:try_update_metadata({ profile = "electrical-meter" })
     return
   end
 
@@ -584,10 +597,24 @@ local function energy_report_handler_factory(is_cumulative_report, cumulative_im
 end
 
 local function active_power_handler(driver, device, ib, response)
+  if ib.data.value == nil then
+    log.warn("active_power_handler received nil power value")
+    return
+  end
+
   local battery_storage_eps = get_endpoints_for_dt(device, BATTERY_STORAGE_DEVICE_TYPE_ID) or {}
   local solar_power_eps = get_endpoints_for_dt(device, SOLAR_POWER_DEVICE_TYPE_ID) or {}
-  -- Consider only Solar Power / Battery Storage devices and sum up in case there are multiple endpoints.
-  if (tbl_contains(solar_power_eps, ib.endpoint_id) or tbl_contains(battery_storage_eps, ib.endpoint_id)) and ib.data.value then
+  local electrical_sensor_eps = get_endpoints_for_dt(device, ELECTRICAL_SENSOR_DEVICE_TYPE_ID) or {}
+  local electrical_meter_eps = get_endpoints_for_dt(device, ELECTRICAL_METER_DEVICE_TYPE_ID) or {}
+  local evse_eps = get_endpoints_for_dt(device, EVSE_DEVICE_TYPE_ID) or {}
+
+  -- Solar Power / Battery Storage use multi-endpoint aggregation.
+  -- Standalone Electrical Sensor and Meter devices (no EVSE) also report power.
+  local is_aggregation_ep = tbl_contains(solar_power_eps, ib.endpoint_id) or tbl_contains(battery_storage_eps, ib.endpoint_id)
+  local is_standalone_ep = #evse_eps == 0
+    and (tbl_contains(electrical_sensor_eps, ib.endpoint_id) or tbl_contains(electrical_meter_eps, ib.endpoint_id))
+
+  if is_aggregation_ep or is_standalone_ep then
     local endpoint_id = string.format(ib.endpoint_id)
     local active_power_map = device:get_field(TOTAL_ACTIVE_POWER) or {}
     local watt_value = ib.data.value / 1000

@@ -1,4 +1,4 @@
-name: electrical-sensor-voltage-current
+name: electrical-meter
 components:
 - id: main
   capabilities:

@@ -56,16 +56,18 @@ local mock_device = test.mock_device.build_test_matter_device({
   }
 })
 
--- Build subscribe list matching the actual driver subscribed_attributes order:
--- energyMeter (PeriodicEnergyExported), powerConsumptionReport (PeriodicEnergyImported),
--- voltageMeasurement (Voltage), powerMeter (ActivePower), currentMeasurement (ActiveCurrent)
+-- Build subscribe list matching the actual driver subscribed_attributes iteration order:
+-- powerSource (PowerMode), voltageMeasurement (Voltage), powerMeter (ActivePower),
+-- currentMeasurement (ActiveCurrent), energyMeter (PeriodicEnergyExported),
+-- powerConsumptionReport (PeriodicEnergyImported)
 local function build_subscribe_request()
   local cluster_subscribe_list = {
-    clusters.ElectricalEnergyMeasurement.attributes.PeriodicEnergyExported,
-    clusters.ElectricalEnergyMeasurement.attributes.PeriodicEnergyImported,
+    clusters.ElectricalPowerMeasurement.attributes.PowerMode,
     clusters.ElectricalPowerMeasurement.attributes.Voltage,
     clusters.ElectricalPowerMeasurement.attributes.ActivePower,
     clusters.ElectricalPowerMeasurement.attributes.ActiveCurrent,
+    clusters.ElectricalEnergyMeasurement.attributes.PeriodicEnergyExported,
+    clusters.ElectricalEnergyMeasurement.attributes.PeriodicEnergyImported,
   }
   local subscribe_request = cluster_subscribe_list[1]:subscribe(mock_device)
   for i, cluster in ipairs(cluster_subscribe_list) do
@@ -87,7 +89,21 @@ local function test_init()
 end
 test.set_test_init_function(test_init)
 
--- ── Test 1: Voltage conversion ───────────────────────────────────────────────
+-- ── Test 1: PowerMode → powerSource ─────────────────────────────────────────
+test.register_coroutine_test(
+  "PowerMode AC report must emit powerSource.powerSource = mains",
+  function()
+    test.socket.matter:__queue_receive({
+      mock_device.id,
+      clusters.ElectricalPowerMeasurement.attributes.PowerMode:build_test_report_data(
+        mock_device, ELECTRICAL_SENSOR_EP, clusters.ElectricalPowerMeasurement.types.PowerModeEnum.AC)
+    })
+    test.socket.capability:__expect_send(mock_device:generate_test_message("main",
+      capabilities.powerSource.powerSource.mains()))
+  end
+)
+
+-- ── Test 2: Voltage conversion ───────────────────────────────────────────────
 test.register_coroutine_test(
   "Voltage report: mV must be converted to V for voltageMeasurement capability",
   function()
@@ -115,7 +131,21 @@ test.register_coroutine_test(
   end
 )
 
--- ── Test 3: CumulativeEnergyImported → energyMeter ──────────────────────────
+-- ── Test 3: ActivePower conversion ──────────────────────────────────
+test.register_coroutine_test(
+  "ActivePower report: mW must be converted to W for powerMeter capability",
+  function()
+    test.socket.matter:__queue_receive({
+      mock_device.id,
+      clusters.ElectricalPowerMeasurement.attributes.ActivePower:build_test_report_data(
+        mock_device, ELECTRICAL_SENSOR_EP, 1500000) -- 1500 W in mW
+    })
+    test.socket.capability:__expect_send(mock_device:generate_test_message("main",
+      capabilities.powerMeter.power({ value = 1500.0, unit = "W" })))
+  end
+)
+
+-- ── Test 4: CumulativeEnergyImported → energyMeter ──────────────────────────
 test.register_coroutine_test(
   "CumulativeEnergyImported report must emit energyMeter with converted Wh value",
   function()

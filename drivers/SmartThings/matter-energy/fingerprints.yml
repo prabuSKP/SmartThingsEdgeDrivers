@@ -20,6 +20,11 @@ matterGeneric:
     deviceTypes:
       - id: 0x0510 #Electrical Sensor (standalone, no EVSE)
     deviceProfileName: electrical-sensor
+  - id: "matter/electrical-meter"
+    deviceLabel: Matter Electrical Meter
+    deviceTypes:
+      - id: 0x0514 #Electrical Meter
+    deviceProfileName: electrical-meter
   - id: "matter/dem-standalone"
     deviceLabel: Matter Device Energy Management
     deviceTypes:
