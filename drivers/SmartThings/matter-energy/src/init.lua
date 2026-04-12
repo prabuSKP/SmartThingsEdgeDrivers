@@ -19,6 +19,7 @@ local log = require "log"
 local utils = require "st.utils"
 local matter_driver_template = {}
 local embedded_cluster_utils = require "embedded_cluster_utils"
+local energy_utils = require "utils.energy_utils"
 
 local version = require "version"
 
@@ -81,6 +82,14 @@ local find_default_endpoint = function(device)
     return evse_eps[1]
   elseif #solar_power_eps > 0 then
     return solar_power_eps[1]
+  end
+  local electrical_sensor_eps = get_endpoints_for_dt(device, ELECTRICAL_SENSOR_DEVICE_TYPE_ID) or {}
+  if #electrical_sensor_eps > 0 then
+    return electrical_sensor_eps[1]
+  end
+  local dem_eps = get_endpoints_for_dt(device, DEVICE_ENERGY_MANAGEMENT_DEVICE_TYPE_ID) or {}
+  if #dem_eps > 0 then
+    return dem_eps[1]
   end
   return device.MATTER_DEFAULT_ENDPOINT
 end
@@ -276,6 +285,40 @@ local function do_configure(driver, device)
 
     device.log.info_with({ hub_logs = true }, string.format("Updating device profile to %s.", profile_name))
     device:try_update_metadata({ profile = profile_name })
+    return
+  end
+
+  -- Standalone Electrical Sensor profile selection
+  -- Solar Power and Battery Storage devices co-locate with ELECTRICAL_SENSOR but use their own profiles
+  local solar_power_eps = get_endpoints_for_dt(device, SOLAR_POWER_DEVICE_TYPE_ID) or {}
+  local battery_storage_eps = get_endpoints_for_dt(device, BATTERY_STORAGE_DEVICE_TYPE_ID) or {}
+  local electrical_sensor_eps = get_endpoints_for_dt(device, ELECTRICAL_SENSOR_DEVICE_TYPE_ID) or {}
+  if #evse_eps == 0 and #solar_power_eps == 0 and #battery_storage_eps == 0 and #electrical_sensor_eps > 0 then
+    local has_voltage = false
+    for _, ep in ipairs(device.endpoints) do
+      for _, cluster in ipairs(ep.clusters) do
+        if cluster.cluster_id == clusters.ElectricalPowerMeasurement.ID then
+          for _, attr in ipairs(cluster.attributes or {}) do
+            if attr.attribute_id == 0x0004 then -- Voltage attribute ID
+              has_voltage = true
+              break
+            end
+          end
+        end
+      end
+    end
+    local profile_name = has_voltage and "electrical-sensor-voltage-current" or "electrical-sensor"
+    device.log.info_with({ hub_logs = true }, string.format("Updating device profile to %s.", profile_name))
+    device:try_update_metadata({ profile = profile_name })
+    return
+  end
+
+  -- Standalone DEM profile selection
+  local dem_eps = get_endpoints_for_dt(device, DEVICE_ENERGY_MANAGEMENT_DEVICE_TYPE_ID) or {}
+  if #evse_eps == 0 and #dem_eps > 0 then
+    device.log.info_with({ hub_logs = true }, "Updating device profile to dem-standalone.")
+    device:try_update_metadata({ profile = "dem-standalone" })
+    return
   end
 end
 
@@ -558,6 +601,40 @@ local function active_power_handler(driver, device, ib, response)
   end
 end
 
+local function voltage_handler(driver, device, ib, response)
+  local voltage = ib.data.value
+  if voltage == nil then
+    log.warn("voltage_handler received nil voltage value")
+    return
+  end
+  if not energy_utils.should_report(device, "__last_voltage_report", ib.endpoint_id) then
+    return -- throttle high-frequency reports
+  end
+  local voltage_V = voltage / 1000 -- convert mV to V
+  energy_utils.log_electrical(ib.endpoint_id, voltage_V, nil, nil)
+  device:emit_event_for_endpoint(
+    ib.endpoint_id,
+    capabilities.voltageMeasurement.voltage({ value = voltage_V, unit = "V" })
+  )
+end
+
+local function active_current_handler(driver, device, ib, response)
+  local current = ib.data.value
+  if current == nil then
+    log.warn("active_current_handler received nil current value")
+    return
+  end
+  if not energy_utils.should_report(device, "__last_current_report", ib.endpoint_id) then
+    return -- throttle high-frequency reports
+  end
+  local current_A = current / 1000 -- convert mA to A
+  energy_utils.log_electrical(ib.endpoint_id, nil, current_A, nil)
+  device:emit_event_for_endpoint(
+    ib.endpoint_id,
+    capabilities.currentMeasurement.current({ value = current_A, unit = "A" })
+  )
+end
+
 local function battery_percent_remaining_attr_handler(driver, device, ib, response)
   if ib.data.value then
     device:emit_event(capabilities.battery.battery(math.floor(ib.data.value / 2.0 + 0.5)))
@@ -617,9 +694,25 @@ local function handle_set_mode_command(driver, device, cmd)
   local set_mode_handlers = {
     ["main"] = function( ... )
       local ep = component_to_endpoint(device, cmd.component)
+      -- Check if this is a standalone DEM device (no EVSE)
+      local evse_eps = get_endpoints_for_dt(device, EVSE_DEVICE_TYPE_ID) or {}
+      local dem_eps = get_endpoints_for_dt(device, DEVICE_ENERGY_MANAGEMENT_DEVICE_TYPE_ID) or {}
+      if #evse_eps == 0 and #dem_eps > 0 then
+        -- Standalone DEM — use DeviceEnergyManagementMode
+        local supportedModes = get_field_for_endpoint(device, SUPPORTED_DEVICE_ENERGY_MANAGEMENT_MODES, ep) or {}
+        for i, mode in ipairs(supportedModes) do
+          if cmd.args.mode == mode or cmd.args[1] == mode then
+            device:send(clusters.DeviceEnergyManagementMode.commands.ChangeToMode(device, ep, i - 1))
+            return
+          end
+        end
+        log.warn("Received request to set unsupported mode for standalone DeviceEnergyManagementMode.")
+        return
+      end
+      -- Existing EVSE mode logic
       local supportedEvseModes = get_field_for_endpoint(device, SUPPORTED_EVSE_MODES, ep) or {}
       for i, mode in ipairs(supportedEvseModes) do
-        if cmd.args.mode == mode then
+        if cmd.args.mode == mode or cmd.args[1] == mode then
           device:send(clusters.EnergyEvseMode.commands.ChangeToMode(device, ep, i - 1))
           return
         end
@@ -630,7 +723,7 @@ local function handle_set_mode_command(driver, device, cmd)
       local ep = component_to_endpoint(device, cmd.component)
       local supportedDeviceEnergyMgmtModes = get_field_for_endpoint(device, SUPPORTED_DEVICE_ENERGY_MANAGEMENT_MODES, ep) or {}
       for i, mode in ipairs(supportedDeviceEnergyMgmtModes) do
-        if cmd.args.mode == mode then
+        if cmd.args.mode == mode or cmd.args[1] == mode then
           device:send(clusters.DeviceEnergyManagementMode.commands.ChangeToMode(device, ep, i - 1))
           return
         end
@@ -667,6 +760,8 @@ matter_driver_template = {
       [clusters.ElectricalPowerMeasurement.ID] = {
         [clusters.ElectricalPowerMeasurement.attributes.PowerMode.ID] = power_mode_handler,
         [clusters.ElectricalPowerMeasurement.attributes.ActivePower.ID] = active_power_handler,
+        [clusters.ElectricalPowerMeasurement.attributes.Voltage.ID] = voltage_handler,
+        [clusters.ElectricalPowerMeasurement.attributes.ActiveCurrent.ID] = active_current_handler,
       },
       [clusters.EnergyEvseMode.ID] = {
         [clusters.EnergyEvseMode.attributes.SupportedModes.ID] = energy_evse_supported_modes_attr_handler,
@@ -717,6 +812,12 @@ matter_driver_template = {
     [capabilities.powerMeter.ID] = {
       clusters.ElectricalPowerMeasurement.attributes.ActivePower
     },
+    [capabilities.voltageMeasurement.ID] = {
+      clusters.ElectricalPowerMeasurement.attributes.Voltage,
+    },
+    [capabilities.currentMeasurement.ID] = {
+      clusters.ElectricalPowerMeasurement.attributes.ActiveCurrent,
+    },
     [capabilities.energyMeter.ID] = {
       clusters.ElectricalEnergyMeasurement.attributes.PeriodicEnergyExported
     },
@@ -748,7 +849,9 @@ matter_driver_template = {
     capabilities.powerMeter,
     capabilities.energyMeter,
     capabilities.battery,
-    capabilities.chargingState
+    capabilities.chargingState,
+    capabilities.voltageMeasurement,
+    capabilities.currentMeasurement,
   },
 }
 

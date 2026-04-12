@@ -14,6 +14,8 @@ ElectricalPowerMeasurement.types = ElectricalPowerMeasurementTypes
 function ElectricalPowerMeasurement:get_attribute_by_id(attr_id)
   local attr_id_map = {
     [0x0000] = "PowerMode",
+    [0x0004] = "Voltage",
+    [0x0005] = "ActiveCurrent",
     [0x0008] = "ActivePower",
   }
   local attr_name = attr_id_map[attr_id]
@@ -25,6 +27,8 @@ end
 
 ElectricalPowerMeasurement.attribute_direction_map = {
   ["PowerMode"] = "server",
+  ["Voltage"] = "server",
+  ["ActiveCurrent"] = "server",
   ["ActivePower"] = "server",
 }
 
