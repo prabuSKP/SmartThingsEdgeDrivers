@@ -71,29 +71,66 @@ local function get_poll_interval(device)
   return math.max(10, poll_value)
 end
 
-local function get_bridge_config(bridge)
+local function get_bridge_endpoint_config(bridge)
   local prefs = bridge.preferences or {}
-  local scheme = normalize_scheme(prefs.scheme)
-  local host = utils.trim(prefs.host or "")
-  local username = utils.trim(prefs.username or "")
-  local password = prefs.password or ""
-  local port = utils.safe_tonumber(prefs.port) or (scheme == "https" and 443 or 80)
+  local field_scheme = bridge:get_field(fields.BRIDGE_SCHEME)
+  local field_host = bridge:get_field(fields.BRIDGE_HOST)
+  local field_port = bridge:get_field(fields.BRIDGE_PORT)
+  local scheme = normalize_scheme(field_scheme or prefs.scheme)
+  local host = utils.trim(field_host or prefs.host or "")
+  local port = utils.safe_tonumber(field_port or prefs.port) or (scheme == "https" and 443 or 80)
 
-  if host == "" or username == "" or password == "" then
-    return nil, "bridge preferences incomplete"
+  if host == "" then
+    return nil, "bridge host unavailable"
   end
 
   return {
     scheme = scheme,
     host = host,
     port = port,
+  }, nil
+end
+
+local function get_bridge_auth(bridge)
+  local prefs = bridge.preferences or {}
+  local username = utils.trim(prefs.username or "")
+  local password = prefs.password or ""
+
+  if username == "" or password == "" then
+    return nil, "bridge credentials incomplete"
+  end
+
+  return {
     username = username,
     password = password,
   }, nil
 end
 
-local function api_for_bridge(bridge)
-  local config, err = get_bridge_config(bridge)
+local function get_bridge_config(bridge, opts)
+  local endpoint, endpoint_err = get_bridge_endpoint_config(bridge)
+  if endpoint_err ~= nil then
+    return nil, endpoint_err
+  end
+
+  opts = opts or {}
+  local auth, auth_err = get_bridge_auth(bridge)
+  if auth_err ~= nil and not opts.allow_anonymous then
+    return nil, auth_err
+  end
+
+  local config = {
+    scheme = endpoint.scheme,
+    host = endpoint.host,
+    port = endpoint.port,
+    username = auth and auth.username or "",
+    password = auth and auth.password or "",
+  }
+
+  return config, nil
+end
+
+local function api_for_bridge(bridge, opts)
+  local config, err = get_bridge_config(bridge, opts)
   if err ~= nil then
     return nil, err
   end
@@ -101,9 +138,41 @@ local function api_for_bridge(bridge)
   return FibaroApi.new(config, bridge.label or bridge.device_network_id), nil
 end
 
-local function controller_for_bridge(bridge, payload)
-  local config, _ = get_bridge_config(bridge)
-  local scheme = config and config.scheme or "http"
+local function persist_bridge_identity(bridge, info, adapter_name)
+  if type(info) ~= "table" then
+    return
+  end
+
+  local platform = tostring(info.platform or "")
+  local serial_number = tostring(info.serialNumber or "")
+  local api_version = utils.api_version_for_serial(serial_number)
+
+  if platform ~= "" then
+    bridge:set_field(fields.PLATFORM, platform, { persist = true })
+  end
+
+  if serial_number ~= "" then
+    bridge:set_field(fields.SERIAL_NUMBER, serial_number, { persist = true })
+  end
+
+  if api_version ~= nil then
+    bridge:set_field(fields.API_VERSION, api_version, { persist = true })
+  end
+
+  if adapter_name ~= nil then
+    bridge:set_field(fields.CONTROLLER_KIND, adapter_name, { persist = true })
+  end
+end
+
+local function controller_for_bridge(bridge, payload, info)
+  local endpoint, _ = get_bridge_endpoint_config(bridge)
+  local scheme = endpoint and endpoint.scheme or "http"
+
+  if info ~= nil then
+    local adapter = adapter_lib.for_info(info, scheme)
+    persist_bridge_identity(bridge, info, adapter.NAME)
+    return adapter
+  end
 
   if payload ~= nil then
     local adapter = adapter_lib.detect_devices(payload, scheme)
@@ -120,6 +189,31 @@ local function controller_for_bridge(bridge, payload)
   return adapter_lib.default_for_scheme(scheme)
 end
 
+local function bootstrap_bridge(bridge)
+  local api, api_err = api_for_bridge(bridge, { allow_anonymous = true })
+  if api == nil then
+    return nil, api_err
+  end
+
+  local _, login_err, login_status = api:get_login_status()
+  if login_err ~= nil or (login_status ~= 200 and login_status ~= 401 and login_status ~= 403) then
+    api:shutdown()
+    return nil, login_err or ("unexpected loginStatus status " .. tostring(login_status))
+  end
+
+  local info, info_err, info_status = api:get_settings_info()
+  api:shutdown()
+  if info_err ~= nil or info_status ~= 200 then
+    return nil, info_err or ("unexpected settings/info status " .. tostring(info_status))
+  end
+
+  local adapter = controller_for_bridge(bridge, nil, info)
+  return {
+    info = info,
+    adapter = adapter,
+  }, nil
+end
+
 local function child_devices_for_bridge(driver, bridge)
   local children = {}
   for _, device in ipairs(driver:get_devices()) do
@@ -128,6 +222,10 @@ local function child_devices_for_bridge(driver, bridge)
     end
   end
   return children
+end
+
+local function child_for_bridge_and_device_id(driver, bridge, device_id)
+  return child_devices_for_bridge(driver, bridge)[utils.child_key_for_id(device_id)]
 end
 
 local function cache_child_metadata(driver, bridge, mapped)
@@ -233,7 +331,21 @@ local function delete_child(driver, child)
   end
 end
 
+local function prime_refresh_states_cursor(api, bridge)
+  local payload, err, status = api:get_refresh_states()
+  if err == nil and status == 200 and type(payload) == "table" and payload.last ~= nil then
+    bridge:set_field(fields.LAST_REFRESH_STATES, payload.last, { persist = true })
+  end
+end
+
 function sync.sync_bridge_inventory(driver, bridge)
+  local bootstrap, bootstrap_err = bootstrap_bridge(bridge)
+  if bootstrap == nil then
+    log.warn(string.format("Skipping Fibaro bridge bootstrap for %s: %s", bridge.label, tostring(bootstrap_err)))
+    bridge:offline()
+    return nil, bootstrap_err
+  end
+
   local api, api_err = api_for_bridge(bridge)
   if api == nil then
     log.warn(string.format("Skipping Fibaro bridge sync for %s: %s", bridge.label, tostring(api_err)))
@@ -249,7 +361,7 @@ function sync.sync_bridge_inventory(driver, bridge)
   end
 
   bridge:online()
-  local adapter = controller_for_bridge(bridge, payload)
+  local adapter = bootstrap.adapter or controller_for_bridge(bridge, payload)
   local discovered = adapter.normalize_device_list(payload)
   local children_by_key = child_devices_for_bridge(driver, bridge)
   local seen = {}
@@ -270,6 +382,89 @@ function sync.sync_bridge_inventory(driver, bridge)
       log.info(string.format("Deleting stale Fibaro child %s", child_key))
       delete_child(driver, child)
     end
+  end
+
+  if bridge:get_field(fields.LAST_REFRESH_STATES) == nil then
+    local prime_api, prime_err = api_for_bridge(bridge)
+    if prime_api ~= nil then
+      prime_refresh_states_cursor(prime_api, bridge)
+      prime_api:shutdown()
+    else
+      log.debug(string.format("Unable to prime refreshStates cursor for %s: %s", bridge.label, tostring(prime_err)))
+    end
+  end
+
+  return true, nil
+end
+
+function sync.poll_bridge(driver, bridge)
+  local last = bridge:get_field(fields.LAST_REFRESH_STATES)
+  if last == nil then
+    return sync.sync_bridge_inventory(driver, bridge)
+  end
+
+  local bootstrap, bootstrap_err = bootstrap_bridge(bridge)
+  if bootstrap == nil then
+    bridge:offline()
+    return nil, bootstrap_err
+  end
+
+  local api, api_err = api_for_bridge(bridge)
+  if api == nil then
+    bridge:offline()
+    return nil, api_err
+  end
+
+  local payload, err, status = api:get_refresh_states(last)
+  api:shutdown()
+
+  if err ~= nil or status ~= 200 or type(payload) ~= "table" then
+    log.warn(string.format(
+      "refreshStates poll failed for %s, falling back to full inventory sync: %s",
+      bridge.label,
+      tostring(err or status)
+    ))
+    return sync.sync_bridge_inventory(driver, bridge)
+  end
+
+  bridge:online()
+
+  if payload.last ~= nil then
+    bridge:set_field(fields.LAST_REFRESH_STATES, payload.last, { persist = true })
+  end
+
+  local should_resync_inventory = false
+  local touched = {}
+  for _, change in ipairs(payload.changes or {}) do
+    local device_id = change.id
+    if device_id == nil then
+      goto continue
+    end
+
+    local child = child_for_bridge_and_device_id(driver, bridge, device_id)
+    if child ~= nil then
+      touched[device_id] = child
+    else
+      should_resync_inventory = true
+    end
+
+    ::continue::
+  end
+
+  for device_id, child in pairs(touched) do
+    local ok, refresh_err = sync.refresh_child(driver, child)
+    if not ok then
+      log.warn(string.format(
+        "Targeted refresh after refreshStates failed for %s (%s): %s",
+        tostring(child.label),
+        tostring(device_id),
+        tostring(refresh_err)
+      ))
+    end
+  end
+
+  if should_resync_inventory then
+    return sync.sync_bridge_inventory(driver, bridge)
   end
 
   return true, nil
@@ -365,14 +560,14 @@ end
 function sync.reschedule_bridge_poll(driver, bridge)
   cancel_bridge_timer(bridge)
 
-  if get_bridge_config(bridge) == nil then
+  if get_bridge_endpoint_config(bridge) == nil then
     return
   end
 
   local timer = bridge.thread:call_on_schedule(
     get_poll_interval(bridge),
     function()
-      sync.sync_bridge_inventory(driver, bridge)
+      sync.poll_bridge(driver, bridge)
     end,
     "Fibaro HC inventory poll"
   )

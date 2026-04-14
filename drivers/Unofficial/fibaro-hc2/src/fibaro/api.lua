@@ -56,9 +56,11 @@ local function build_base_url(config)
 end
 
 function fibaro_api.new(config, label)
-  local auth_header = "Basic " .. base64.encode(string.format("%s:%s", config.username, config.password))
   local headers = copy_headers(DEFAULT_HEADERS)
-  headers["Authorization"] = auth_header
+  if (config.username or "") ~= "" or (config.password or "") ~= "" then
+    local auth_header = "Basic " .. base64.encode(string.format("%s:%s", config.username or "", config.password or ""))
+    headers["Authorization"] = auth_header
+  end
   headers["X-Fibaro-Version"] = "2"
 
   local socket_builder = utils.labeled_socket_builder(
@@ -95,18 +97,81 @@ function fibaro_api:get_device(device_id)
   return process_response(response, err)
 end
 
+function fibaro_api:get_login_status()
+  log.info("Requesting Fibaro bootstrap: GET /api/loginStatus")
+  local response, err = self.client:get("/api/loginStatus", self.headers, retry_fn(3))
+  return process_response(response, err)
+end
+
+function fibaro_api:get_settings_info()
+  log.info("Requesting Fibaro bootstrap: GET /api/settings/info")
+  local response, err = self.client:get("/api/settings/info", self.headers, retry_fn(3))
+  return process_response(response, err)
+end
+
+function fibaro_api:get_refresh_states(last)
+  local suffix = ""
+  if last ~= nil then
+    suffix = "?last=" .. tostring(last)
+  end
+
+  log.info("Requesting Fibaro incremental state feed: GET /api/refreshStates" .. suffix)
+  local response, err = self.client:get("/api/refreshStates" .. suffix, self.headers, retry_fn(3))
+  return process_response(response, err)
+end
+
 function fibaro_api:get_scenes()
   local response, err = self.client:get("/api/scenes", self.headers, retry_fn(3))
   return process_response(response, err)
 end
 
-function fibaro_api:execute_scene(scene_id, body)
+function fibaro_api:start_scene(scene_id)
+  local response, err = self.client:post(
+    string.format("/api/scenes/%s/action/start", tostring(scene_id)),
+    "",
+    self.headers,
+    retry_fn(3)
+  )
+  return process_response(response, err)
+end
+
+function fibaro_api:stop_scene(scene_id)
+  local response, err = self.client:post(
+    string.format("/api/scenes/%s/action/stop", tostring(scene_id)),
+    "",
+    self.headers,
+    retry_fn(3)
+  )
+  return process_response(response, err)
+end
+
+function fibaro_api:execute_scene(scene_id, body, headers)
   local payload = json.encode(body or {})
   log.info(string.format("Executing Fibaro scene %s", tostring(scene_id)))
+  local merged_headers = copy_headers(self.headers)
+  for k, v in pairs(headers or {}) do
+    merged_headers[k] = v
+  end
   local response, err = self.client:post(
     string.format("/api/scenes/%s/execute", tostring(scene_id)),
     payload,
-    self.headers,
+    merged_headers,
+    retry_fn(3)
+  )
+  return process_response(response, err)
+end
+
+function fibaro_api:kill_scene(scene_id, body, headers)
+  local payload = json.encode(body or {})
+  log.info(string.format("Killing Fibaro scene %s", tostring(scene_id)))
+  local merged_headers = copy_headers(self.headers)
+  for k, v in pairs(headers or {}) do
+    merged_headers[k] = v
+  end
+  local response, err = self.client:post(
+    string.format("/api/scenes/%s/kill", tostring(scene_id)),
+    payload,
+    merged_headers,
     retry_fn(3)
   )
   return process_response(response, err)

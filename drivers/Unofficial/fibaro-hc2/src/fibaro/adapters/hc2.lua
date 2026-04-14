@@ -59,6 +59,10 @@ function hc2.normalize_device(raw_device)
   local actions = type(raw_device.actions) == "table" and raw_device.actions or {}
   local interfaces = type(raw_device.interfaces) == "table" and raw_device.interfaces or {}
   local value = props.value
+  local dead = props.dead
+  if type(dead) == "string" then
+    dead = dead:lower() == "true"
+  end
 
   return {
     controller = hc2.NAME,
@@ -71,12 +75,19 @@ function hc2.normalize_device(raw_device)
     interfaces = interfaces,
     value = value,
     level = utils.safe_tonumber(value),
-    dead = props.dead == true,
+    dead = dead == true,
     visible = raw_device.visible ~= false,
-    is_plugin = has_interface(interfaces, "plugin"),
-    is_gateway = has_interface(interfaces, "gateway") or tostring(raw_device.baseType or ""):find("gateway", 1, true) ~= nil,
+    enabled = raw_device.enabled ~= false,
+    is_plugin = raw_device.isPlugin == true or raw_device.type == "virtual_device" or has_interface(interfaces, "plugin") or has_interface(interfaces, "virtualDevice"),
+    is_gateway = has_interface(interfaces, "gateway")
+      or tostring(raw_device.baseType or ""):find("gateway", 1, true) ~= nil
+      or tostring(raw_device.type or ""):find("PrimaryController", 1, true) ~= nil
+      or tostring(raw_device.type or "") == "HC_user",
+    is_user = tostring(raw_device.type or "") == "HC_user" or tostring(raw_device.type or "") == "VOIP_user",
+    parent_id = utils.safe_tonumber(raw_device.parentId) or 0,
     device_role = tostring(props.deviceRole or ""),
     device_control_type = props.deviceControlType,
+    unit = props.unit,
     raw = raw_device,
   }
 end

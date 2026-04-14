@@ -1,20 +1,21 @@
-# SmartThings Edge Driver Integration for Fibaro HC2 Local API
+# SmartThings Edge Driver Integration for Fibaro HC2 and HC3 Local API
 
 ## Purpose
 
-This document describes the system architecture for controlling Fibaro devices in the SmartThings app through a SmartThings Hub using a SmartThings Edge Driver and a local Fibaro HC2-compatible REST API.
+This document describes the current architecture for controlling Fibaro devices in the SmartThings app through a SmartThings Hub using a SmartThings Edge Driver and local Fibaro HC2 or HC3 REST APIs.
 
-The same architecture supports two backends:
+The same driver package supports two controller families:
 
-- A real Fibaro Home Center 2 / Lite controller on the local network
-- A mock HC2-compatible server used for development, testing, and regression validation
+- HC2 style controllers through manual onboarding
+- HC3 style controllers through mDNS discovery plus bootstrap validation
 
 ## Goals
 
 - Control Fibaro devices from the SmartThings app
 - Keep device communication local through the SmartThings Hub
-- Use a stable HC2-compatible REST contract for both development and production
-- Validate Edge Driver behavior against a mock server before connecting to a real Fibaro controller
+- Use a stable Fibaro local REST contract across both controller families
+- Discover HC3 controllers through mDNS on the LAN
+- Validate Edge Driver behavior against the mock server before connecting to a real Fibaro controller
 
 ## High-Level Architecture
 
@@ -23,9 +24,11 @@ flowchart LR
     A["SmartThings App"] --> B["SmartThings Cloud"]
     B --> C["SmartThings Hub"]
     C --> D["SmartThings Edge Driver"]
-    D <-->|"HTTP + Basic Auth + JSON over LAN"| E["Fibaro HC2 API"]
-    E --> F["Fibaro Devices"]
-    D <-->|"Same API contract"| G["Mock Fibaro HC2 Server"]
+    D -->|"Manual bootstrap"| E["Fibaro HC2 API"]
+    D -->|"mDNS + bootstrap"| F["Fibaro HC3 API"]
+    E --> G["Fibaro Devices"]
+    F --> G
+    D <-->|"Parity validation"| H["Mock Fibaro HC2/HC3 Server"]
 ```
 
 ## Core Components
@@ -50,18 +53,19 @@ flowchart LR
 
 ### SmartThings Edge Driver
 
-- Discovers and connects to the Fibaro HC2-compatible API
-- Authenticates using Basic Auth
-- Reads device inventory and metadata
-- Maps Fibaro devices to SmartThings capabilities
-- Sends control commands to the Fibaro API
-- Polls for device state and emits SmartThings events
+- Maintains one package for HC2 and HC3
+- Uses manual placeholder onboarding for HC2
+- Uses required mDNS discovery for HC3
+- Bootstraps controller identity through `loginStatus` and `settings/info`
+- Maps normalized Fibaro devices to SmartThings capabilities
+- Sends local device commands over LAN
+- Uses inventory sync plus `refreshStates` incremental polling
 
-### Fibaro HC2 API
+### Fibaro Controller APIs
 
-- Exposes the REST endpoints consumed by the Edge Driver
-- Represents controller inventory, rooms, scenes, virtual devices, and actions
-- May be a real Fibaro HC2/Lite controller or a mock HC2 server
+- Expose the REST endpoints consumed by the Edge Driver
+- Represent controller inventory, rooms, scenes, virtual devices, plugins, and actions
+- May be a real Fibaro HC2, HCL, HC3, HC3L, Yubii Home, or a mock compatibility server
 
 ### Fibaro Devices
 
@@ -72,13 +76,18 @@ flowchart LR
 
 The integration is based on a local LAN API model:
 
-- The Edge Driver communicates with the Fibaro controller using HTTP on the local network
+- The Edge Driver communicates with the Fibaro controller using local HTTP or HTTPS on the LAN
 - Commands and polling stay between the hub and the HC2 API endpoint
 - The SmartThings app remains the control UI, while the hub performs the actual device integration work
 
 This approach reduces latency and makes testing easier because the mock server can reproduce the same API contract locally.
 
 ## API Contract Used by the Edge Driver
+
+### Bootstrap APIs
+
+- `GET /api/loginStatus`
+- `GET /api/settings/info`
 
 ### Primary Device APIs
 
@@ -93,8 +102,14 @@ This approach reduces latency and makes testing easier because the mock server c
 - `GET /api/scenes`
 - `GET /api/virtualDevices`
 - `GET /api/plugins/installed`
-- `GET /api/loginStatus`
 - `GET /api/refreshStates`
+
+### Scene APIs By Controller Family
+
+- HC2: `POST /api/scenes/:id/action/start`
+- HC2: `POST /api/scenes/:id/action/stop`
+- HC3: `POST /api/scenes/:id/execute`
+- HC3: `POST /api/scenes/:id/kill`
 
 ### Action Pattern
 
@@ -113,9 +128,10 @@ Content-Type: application/json
 
 ### 1. Discovery Layer
 
-- Locates the HC2-compatible API endpoint on the LAN
-- Stores IP address, port, and credentials
-- Confirms connectivity and authentication
+- Creates one manual HC2 bridge placeholder
+- Scans `_http._tcp.local` for HC3 controllers through `st.mdns`
+- Extracts host, port, `platform`, `serialNumber`, and related TXT data
+- Creates or updates HC3 bridge devices from the discovered serial number
 
 ### 2. Transport Layer
 
@@ -123,11 +139,12 @@ Content-Type: application/json
 - Applies Basic Auth headers
 - Handles timeouts, retries, and parsing of JSON responses
 
-### 3. HC2 API Adapter Layer
+### 3. Bootstrap and Adapter Layer
 
-- Wraps raw Fibaro endpoints behind driver-side functions
-- Normalizes response handling for devices, rooms, scenes, and actions
-- Shields the rest of the driver from transport details
+- Reads `loginStatus` and `settings/info` before inventory sync
+- Determines controller family from `platform` and `serialNumber`
+- Selects the HC2 or HC3 adapter path
+- Normalizes response handling for devices, scenes, and actions
 
 ### 4. Capability Mapping Layer
 
@@ -143,8 +160,10 @@ Examples:
 
 ### 5. State Synchronization Layer
 
+- Performs full inventory sync on startup and reconciliation passes
 - Polls device state using `GET /api/devices/:id`
-- Refreshes inventory or metadata when required
+- Tracks incremental bridge changes with `GET /api/refreshStates?last=<cursor>`
+- Refreshes only touched child devices when the change feed reports updates
 - Emits SmartThings events when values change
 - Handles offline or delayed responses
 
@@ -156,13 +175,26 @@ Examples:
 
 ## Main Runtime Flows
 
-### Device Discovery Flow
+### HC2 Discovery Flow
 
-1. Edge Driver connects to the Fibaro HC2-compatible API.
-2. Driver calls `GET /api/devices`.
-3. Driver optionally loads `rooms`, `sections`, `scenes`, and `virtualDevices`.
-4. Driver maps Fibaro entities into SmartThings devices.
-5. SmartThings app displays discovered devices.
+1. The driver creates a manual HC2 bridge placeholder.
+2. The user enters host and credentials.
+3. The driver calls `GET /api/loginStatus`.
+4. The driver calls `GET /api/settings/info`.
+5. The driver confirms the HC2 family.
+6. The driver calls `GET /api/devices`.
+7. The driver creates SmartThings child devices for supported end devices.
+
+### HC3 Discovery Flow
+
+1. The driver scans `_http._tcp.local` using mDNS.
+2. The driver resolves host, port, and TXT data.
+3. The driver creates or updates a bridge keyed by discovered serial number.
+4. The driver calls `GET /api/loginStatus`.
+5. The driver calls `GET /api/settings/info`.
+6. The driver confirms the HC3 family.
+7. The driver calls `GET /api/devices`.
+8. The driver creates SmartThings child devices for supported end devices.
 
 ### Command Flow
 
@@ -175,16 +207,16 @@ Examples:
 7. Driver emits the updated SmartThings event.
 8. SmartThings app shows the new state.
 
-### Polling Flow
+### Incremental Polling Flow
 
-1. Edge Driver periodically requests `GET /api/devices/:id`.
-2. Returned `properties` are compared with cached state.
-3. Changes are translated to SmartThings events.
-4. Device health and response latency are evaluated.
+1. Edge Driver stores the last `refreshStates` cursor on the bridge.
+2. Periodic bridge polls call `GET /api/refreshStates?last=<cursor>`.
+3. Changed device IDs trigger targeted `GET /api/devices/:id` refreshes.
+4. Unknown change IDs or cursor failures fall back to a full inventory sync.
 
 ## Development and Test Architecture
 
-The mock Fibaro HC2 server is used as a drop-in substitute for a real controller.
+The mock Fibaro server is used as a drop-in substitute for a real controller.
 
 ### Why the Mock Server Exists
 
@@ -195,8 +227,9 @@ The mock Fibaro HC2 server is used as a drop-in substitute for a real controller
 
 ### Mock Server Responsibilities
 
-- Return HC2-shaped JSON payloads
-- Support HC2-style device action endpoints
+- Return HC2- and HC3-shaped JSON payloads
+- Support controller-specific scene routes
+- Advertise HC3-style mDNS records for discovery testing
 - Provide consistent device, room, scene, and virtual-device inventory
 - Simulate latency, offline state, and sensor activity through mock-only endpoints
 
@@ -216,13 +249,13 @@ These are not part of the real HC2 API and must never be required by the Edge Dr
 ### Development
 
 - SmartThings Hub running the Edge Driver
-- Mock HC2 server running on a local machine
+- Mock HC2/HC3 server running on a local machine
 - SmartThings app used to validate discovery, control, and state updates
 
 ### Production
 
 - SmartThings Hub running the same Edge Driver
-- Real Fibaro HC2 or Lite controller on the same LAN
+- Real Fibaro HC2, HCL, HC3, HC3L, or compatible controller on the same LAN
 - Real Fibaro end devices behind the controller
 
 ## Security Model
@@ -242,26 +275,30 @@ These are not part of the real HC2 API and must never be required by the Edge Dr
 
 ### Authentication Failure
 
-- Driver should fail discovery or initialization clearly
+- Driver should fail bootstrap or initialization clearly
 - User must correct the configured credentials
 
 ### Unsupported or Unknown Device Type
 
-- Driver should fall back to capability detection using `actions` and `properties`
+- Driver should use capability detection from `actions`, `type`, and normalized properties
+- Controller, user, plugin, and virtual-device noise should be filtered before child creation
 - Unknown Fibaro types should not break discovery for known devices
 
 ### Stale or Delayed State
 
-- Polling remains the source of truth
+- `refreshStates` is the preferred incremental feed
+- Full inventory sync remains the reconciliation source of truth
 - Last successful update wins unless a newer state is confirmed
 
 ## Key Design Principles
 
 - Local-first communication through the SmartThings Hub
-- Strict reliance on the HC2 REST contract
+- Bootstrap first, inventory second
+- Required mDNS discovery for HC3
+- Manual onboarding retained for HC2
 - Capability-first interpretation of Fibaro devices
 - Clear separation between production API behavior and mock-only test controls
-- Same Edge Driver logic should work against both the mock server and a real Fibaro controller
+- Same Edge Driver package should work against both the mock server and a real Fibaro controller
 
 ## Recommended Next Documents
 

@@ -37,6 +37,18 @@ function mapper.map_device(device)
     return nil, "controller device"
   end
 
+  if device.is_user then
+    return nil, "user device"
+  end
+
+  if device.is_plugin then
+    return nil, "plugin or virtual device"
+  end
+
+  if device.enabled == false then
+    return nil, "disabled device"
+  end
+
   local actions = device.actions or {}
   local device_type = tostring(device.type or "")
   local base_type = tostring(device.base_type or "")

@@ -97,10 +97,17 @@ function hc3.normalize_device(raw_device)
     level = level,
     dead = props.dead == true,
     visible = raw_device.visible ~= false,
+    enabled = raw_device.enabled ~= false,
     is_plugin = raw_device.isPlugin == true or has_interface(interfaces, "plugin"),
-    is_gateway = has_interface(interfaces, "gateway") or tostring(raw_device.baseType or ""):find("gateway", 1, true) ~= nil,
+    is_gateway = has_interface(interfaces, "gateway")
+      or tostring(raw_device.baseType or ""):find("gateway", 1, true) ~= nil
+      or tostring(raw_device.type or ""):find("PrimaryController", 1, true) ~= nil
+      or tostring(raw_device.type or "") == "HC_user",
+    is_user = tostring(raw_device.type or "") == "HC_user" or tostring(raw_device.type or "") == "VOIP_user",
+    parent_id = utils.safe_tonumber(raw_device.parentId) or 0,
     device_role = tostring(props.deviceRole or ""),
     device_control_type = props.deviceControlType,
+    unit = props.unit,
     raw = raw_device,
   }
 end

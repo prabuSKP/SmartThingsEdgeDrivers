@@ -1,149 +1,130 @@
-# Fibaro HC2 Mock API
+# Fibaro HC2 and HC3 Driver Notes
 
-Local Node.js + Express mock server that exposes an HC2-style API for SmartThings Edge Driver testing.
+This document summarizes the contract the SmartThings Fibaro Edge driver now targets after the HC3 discovery and bootstrap work.
 
-## Quick Start
+## Current Driver Behavior
 
-1. Install dependencies:
+The driver supports both controller families in one package:
 
-   ```bash
-   npm install
-   ```
+- HC2 uses a manual bridge placeholder with user-entered host and credentials.
+- HC3 requires mDNS discovery and creates bridge devices from the discovered controller identity.
 
-2. Start the mock server:
+## Bootstrap Contract
 
-   ```bash
-   npm start
-   ```
+Before inventory sync, the driver now treats these endpoints as the controller bootstrap contract:
 
-3. Run the automated tests:
+- `GET /api/loginStatus`
+- `GET /api/settings/info`
 
-   ```bash
-   npm test
-   ```
+The bridge uses `settings/info` as the source of truth for:
 
-Server base URL:
+- controller family
+- API generation
+- `platform`
+- `serialNumber`
 
-```text
-http://localhost:3000/api
-```
+Only after bootstrap does the driver move on to inventory and runtime state sync.
 
-Default Basic Auth credentials come from `.env`:
+## Discovery Model
 
-```text
-admin / admin
-```
+### HC2
 
-## Contract
+- Manual placeholder bridge
+- User enters host, protocol, username, and password
+- Driver bootstraps with `loginStatus` and `settings/info`
 
-- Base URL: `http://<host>:<port>/api`
-- Auth: Basic Auth using `MOCK_USER` / `MOCK_PASS`
-- Content-Type: `application/json`
-- Dimmer `setValue` range: `0-99`
-- State model: static seed data plus mutable in-memory runtime state
-- Concurrency model: last write wins
-- Action route: `POST /api/devices/:id/action/:actionName` with body `{"args":[...]}`
-- Error shape: HC2-like `404` / `405` routes return no content
+### HC3
 
-## Endpoints
+- mDNS discovery is required
+- The driver scans `_http._tcp.local`
+- It parses TXT values such as `platform`, `serialNumber`, `apiVersion`, and `path`
+- Bridge identity is persisted by discovered serial number
+- Discovered host, port, and scheme are stored on the bridge and used for runtime calls
 
-### Core API
+Manual host entry remains in the profile only as an operator override or recovery path. It is not the primary HC3 onboarding path.
+
+## Runtime Contract Used By The Driver
+
+### Bootstrap
+
+- `GET /api/loginStatus`
+- `GET /api/settings/info`
+
+### Inventory And Child State
 
 - `GET /api/devices`
 - `GET /api/devices/:id`
+
+### Device Commands
+
 - `POST /api/devices/:id/action/:actionName`
-- `GET|POST|PUT|DELETE /api/devices`
-- `GET|POST|PUT|DELETE /api/sections`
-- `GET|POST|PUT|DELETE /api/rooms`
-- `GET|POST|PUT|DELETE /api/scenes`
-- `GET|POST|PUT|DELETE /api/virtualDevices`
-- `GET /api/rooms`
-- `GET /api/scenes`
-- `GET /api/plugins/installed`
-- `GET|PUT /api/loginStatus`
+
+### Incremental State Feed
+
 - `GET /api/refreshStates`
+- `GET /api/refreshStates?last=<cursor>`
 
-### Mock Controls
+The driver still uses full inventory sync for startup and reconciliation, but it now stores a `refreshStates` cursor on the bridge and uses incremental change polling for normal bridge polls.
 
-- `POST /__mock/device/:id/state`
-- `POST /__mock/simulate/motion/start`
-- `POST /__mock/simulate/motion/stop`
-- `POST /__mock/faults/latency`
-- `POST /__mock/faults/offline`
-- `GET /__mock/state`
+## Current Mapping Rules
 
-## Supported Actions
+The driver creates SmartThings child devices for:
 
-| Behavior | Detection Rule | Supported Actions | State Change |
-| --- | --- | --- | --- |
-| Switch | `turnOn` + `turnOff`, no `setValue` | `turnOn`, `turnOff` | `value = 1` or `0` |
-| Dimmer | `setValue` exists | `turnOn`, `turnOff`, `setValue` | `turnOn => 99`, `turnOff => 0`, `setValue => clamp(0-99)` |
-| Sensor-like | no control actions, `properties.value` exists | none | read-only state |
-| Virtual device | `/api/virtualDevices` | `pressButton`, `setSlider`, `setProperty` | virtual-device specific |
+- switch
+- dimmer
+- contact sensor
+- motion sensor
+- generic value-only sensor
 
-## API Examples
+The driver now explicitly filters out infrastructure-style inventory entries such as:
 
-Get all devices:
+- controller devices
+- user devices such as `HC_user`
+- plugin and virtual-device style records
+- disabled devices
 
-```bash
-curl -u admin:admin http://localhost:3000/api/devices
-```
+This matters because the updated mock returns controller, user, plugin, and virtual-device records in `/api/devices`, not only end devices.
 
-Get one device:
+## Scene Status
 
-```bash
-curl -u admin:admin http://localhost:3000/api/devices/45
-```
+The HTTP client now includes the route family needed to support both scene models:
 
-Turn on a switch:
+- HC2: `POST /api/scenes/:id/action/start|stop`
+- HC3: `POST /api/scenes/:id/execute|kill`
 
-```bash
-curl -u admin:admin -H "Content-Type: application/json" -X POST -d "{\"args\":[]}" http://localhost:3000/api/devices/45/action/turnOn
-```
+Scene devices are still not surfaced into SmartThings device models in this implementation pass.
 
-Set a dimmer to 75:
+## Mock Alignment Notes
 
-```bash
-curl -u admin:admin -H "Content-Type: application/json" -X POST -d "{\"args\":[75]}" http://localhost:3000/api/devices/46/action/setValue
-```
+The updated mock at `C:\Prabu\Application\Fibaro_lua` now aligns more closely with pyfibaro expectations:
 
-Mark a device offline:
+- bootstrap reads happen through `loginStatus` and `settings/info`
+- HC3 mDNS records can advertise `platform`, `serialNumber`, `apiVersion`, and `path`
+- `/api/refreshStates` returns cursor-based incremental changes
+- HC3 payloads use more native booleans and numbers
 
-```bash
-curl -u admin:admin -H "Content-Type: application/json" -d "{\"deviceID\":45,\"dead\":true}" http://localhost:3000/__mock/faults/offline
-```
+The SmartThings driver implementation now follows that model.
 
-Add 500ms latency:
+## Remaining Gaps
 
-```bash
-curl -u admin:admin -H "Content-Type: application/json" -d "{\"latencyMs\":500}" http://localhost:3000/__mock/faults/latency
-```
+- No SmartThings scene device exposure yet
+- No virtual-device or plugin support yet
+- No verified real-HC3 mDNS parity capture beyond the mock contract
+- HTTPS still uses relaxed certificate verification for local controller access
 
-Get one scene through the HC2-style query-id form:
+## Validation Focus
 
-```bash
-curl -u admin:admin "http://localhost:3000/api/scenes?id=10"
-```
+Use `API_PROFILE=hc2` and `API_PROFILE=hc3` separately during validation.
 
-Create a room:
+HC3 validation should confirm:
 
-```bash
-curl -u admin:admin -H "Content-Type: application/json" -X POST -d "{\"name\":\"Office\",\"sectionID\":2,\"icon\":\"room_office\",\"defaultSensors\":{\"temperature\":0,\"humidity\":0,\"light\":0},\"defaultThermostat\":0,\"sortOrder\":20}" http://localhost:3000/api/rooms
-```
+1. mDNS discovery creates the bridge without manual host entry
+2. bridge bootstrap resolves controller family from `settings/info`
+3. inventory excludes controller and plugin noise
+4. `refreshStates` polling updates child devices after changes
 
-## Known Differences Vs Real HC2
+HC2 validation should confirm:
 
-- State is in-memory only and resets on restart.
-- The action subset is intentionally narrow: `turnOn`, `turnOff`, `setValue`, and a minimal virtual-device subset.
-- Fault injection is available under `/__mock/*`, which is not part of the real HC2 API.
-- Device, room, scene, and virtual-device payloads are HC2-shaped seed data, not raw captures exported from a live controller.
-- The mock includes a controller, normal devices, one virtual device, and one plugin-style device so discovery logic is closer to a real HC2 inventory.
-
-## Integration Notes
-
-- Discovery: use `GET /api/devices`
-- Polling: use `GET /api/devices/:id`
-- Commands: use `POST /api/devices/:id/action/:actionName` with `{"args":[...]}`
-- If your driver queries collections with `?id=<n>`, the mock returns the single object form that HC2 examples use.
-- Generic `com.fibaro.device` handling should inspect `actions` first, not just `type`
-- Offline simulation is exposed through `properties.dead`; timeout behavior should be tested with `/__mock/faults/latency`
+1. manual bridge bootstrap still works
+2. inventory and commands remain stable
+3. full inventory sync still reconciles child creation and deletion

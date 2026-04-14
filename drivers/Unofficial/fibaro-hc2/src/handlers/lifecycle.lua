@@ -1,5 +1,6 @@
 local log = require "log"
 
+local discovery = require "discovery"
 local fields = require "fields"
 local sync = require "fibaro.sync"
 local utils = require "utils"
@@ -12,6 +13,7 @@ function lifecycle.init(driver, device)
   end
 
   if utils.is_bridge(device) then
+    discovery.apply_pending_bridge_metadata(driver, device)
     sync.reschedule_bridge_poll(driver, device)
     local ok, err = sync.sync_bridge_inventory(driver, device)
     if not ok and err then
@@ -25,7 +27,9 @@ function lifecycle.init(driver, device)
 end
 
 function lifecycle.added(driver, device)
-  if not utils.is_bridge(device) then
+  if utils.is_bridge(device) then
+    discovery.apply_pending_bridge_metadata(driver, device)
+  else
     sync.apply_pending_child_metadata(driver, device)
   end
 

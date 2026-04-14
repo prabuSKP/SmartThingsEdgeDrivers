@@ -2,6 +2,15 @@ local log = require "log"
 
 local utils = {}
 
+local API_VERSION_MATCHER = {
+  HC2 = 4,
+  HCL = 4,
+  HC3 = 5,
+  HC3L = 5,
+  YH = 5,
+  ZB = 5,
+}
+
 function utils.backoff_builder(max, inc, rand)
   local count = 0
   inc = inc or 1
@@ -132,6 +141,61 @@ function utils.value_is_truthy(value)
   end
 
   return value ~= nil
+end
+
+function utils.starts_with(value, prefix)
+  return type(value) == "string"
+    and type(prefix) == "string"
+    and value:sub(1, #prefix) == prefix
+end
+
+function utils.in_array(values, needle)
+  if type(values) ~= "table" then
+    return false
+  end
+
+  for _, value in ipairs(values) do
+    if value == needle then
+      return true
+    end
+  end
+
+  return false
+end
+
+function utils.api_version_for_serial(serial_number)
+  local serial = tostring(serial_number or "")
+  for prefix, version in pairs(API_VERSION_MATCHER) do
+    if utils.starts_with(serial, prefix) then
+      return version
+    end
+  end
+
+  return nil
+end
+
+function utils.controller_kind_from_info(info)
+  if type(info) ~= "table" then
+    return nil
+  end
+
+  local platform = tostring(info.platform or ""):upper()
+  if platform == "HC3" or platform == "HC3L" or platform == "YH" or platform == "ZB" then
+    return "hc3"
+  end
+
+  if platform == "HC2" or platform == "HCL" then
+    return "hc2"
+  end
+
+  local api_version = utils.api_version_for_serial(info.serialNumber)
+  if api_version == 5 then
+    return "hc3"
+  elseif api_version == 4 then
+    return "hc2"
+  end
+
+  return nil
 end
 
 return utils
