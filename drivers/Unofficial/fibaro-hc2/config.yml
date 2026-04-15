@@ -1,7 +1,7 @@
-name: 'Fibaro HC'
+name: 'Fibaro'
 packageKey: 'fibaro-hc2'
 permissions:
   lan: {}
   discovery: {}
-description: "SmartThings Edge driver for Fibaro HC2 manual onboarding and Fibaro HC3 mDNS-discovered Local API devices"
+description: "SmartThings Edge driver for Fibaro HC2 and HC3 controllers via Local API"
 vendorSupportInformation: "https://support.smartthings.com"

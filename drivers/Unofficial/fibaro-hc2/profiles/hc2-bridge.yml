@@ -9,7 +9,7 @@ components:
 preferences:
   - name: scheme
     title: Protocol
-    description: Use `http` for HC2. HC3 is discovered by mDNS and usually uses the discovered host and port.
+    description: Auto-detected for mDNS-discovered bridges. Only set manually to override (http or https).
     required: false
     preferenceType: string
     definition:
@@ -19,7 +19,7 @@ preferences:
       default: "http"
   - name: host
     title: Fibaro Host
-    description: Manual host for HC2. HC3 discovery should populate the active endpoint through mDNS.
+    description: Auto-populated by mDNS discovery. Leave empty for discovered bridges. Set manually only for HC2 or to override the discovered address.
     required: false
     preferenceType: string
     definition:
@@ -29,7 +29,7 @@ preferences:
       default: ""
   - name: port
     title: Fibaro Port
-    description: Manual API port for HC2. Leave empty to use `80` for HTTP or `443` for HTTPS.
+    description: Auto-detected for mDNS-discovered bridges. Leave empty to use the default (80 for HTTP, 443 for HTTPS).
     required: false
     preferenceType: string
     definition:
@@ -39,7 +39,7 @@ preferences:
       default: ""
   - name: username
     title: Fibaro Username
-    description: Username for Fibaro HC2 or HC3 Basic Auth.
+    description: Username for Fibaro HC2 or HC3 Basic Auth. Required for device sync.
     required: false
     preferenceType: string
     definition:
@@ -49,7 +49,7 @@ preferences:
       default: ""
   - name: password
     title: Fibaro Password
-    description: Password for Fibaro HC2 or HC3 Basic Auth.
+    description: Password for Fibaro HC2 or HC3 Basic Auth. Required for device sync.
     required: false
     preferenceType: string
     definition:
@@ -66,3 +66,4 @@ preferences:
       minimum: 10
       maximum: 3600
       default: 30
+

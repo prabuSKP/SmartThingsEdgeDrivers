@@ -106,6 +106,20 @@ local function get_bridge_auth(bridge)
   }, nil
 end
 
+local function bridge_has_inventory_config(bridge)
+  local _, endpoint_err = get_bridge_endpoint_config(bridge)
+  if endpoint_err ~= nil then
+    return false, endpoint_err
+  end
+
+  local _, auth_err = get_bridge_auth(bridge)
+  if auth_err ~= nil then
+    return false, auth_err
+  end
+
+  return true, nil
+end
+
 local function get_bridge_config(bridge, opts)
   local endpoint, endpoint_err = get_bridge_endpoint_config(bridge)
   if endpoint_err ~= nil then
@@ -339,6 +353,17 @@ local function prime_refresh_states_cursor(api, bridge)
 end
 
 function sync.sync_bridge_inventory(driver, bridge)
+  local has_config, config_err = bridge_has_inventory_config(bridge)
+  if not has_config then
+    log.info(string.format(
+      "Fibaro bridge %s discovered but not ready for inventory sync: %s. "
+      .. "Please configure credentials in device settings.",
+      bridge.label, tostring(config_err)
+    ))
+    bridge:offline()
+    return nil, config_err
+  end
+
   local bootstrap, bootstrap_err = bootstrap_bridge(bridge)
   if bootstrap == nil then
     log.warn(string.format("Skipping Fibaro bridge bootstrap for %s: %s", bridge.label, tostring(bootstrap_err)))
@@ -398,6 +423,16 @@ function sync.sync_bridge_inventory(driver, bridge)
 end
 
 function sync.poll_bridge(driver, bridge)
+  local has_config, config_err = bridge_has_inventory_config(bridge)
+  if not has_config then
+    log.info(string.format(
+      "Fibaro bridge %s poll skipped: %s. Waiting for credentials.",
+      bridge.label, tostring(config_err)
+    ))
+    bridge:offline()
+    return nil, config_err
+  end
+
   local last = bridge:get_field(fields.LAST_REFRESH_STATES)
   if last == nil then
     return sync.sync_bridge_inventory(driver, bridge)
@@ -560,7 +595,12 @@ end
 function sync.reschedule_bridge_poll(driver, bridge)
   cancel_bridge_timer(bridge)
 
-  if get_bridge_endpoint_config(bridge) == nil then
+  local has_config = bridge_has_inventory_config(bridge)
+  if not has_config then
+    log.info(string.format(
+      "Fibaro bridge %s poll scheduling deferred: waiting for endpoint and credentials.",
+      bridge.label
+    ))
     return
   end
 

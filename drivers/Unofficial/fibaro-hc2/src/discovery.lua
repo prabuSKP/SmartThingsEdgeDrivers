@@ -8,7 +8,7 @@ local utils = require "utils"
 
 local discovery = {}
 
-local HC2_MANUAL_BRIDGE_DNI = "fibaro-hc2-manual-bridge"
+
 local MDNS_DOMAIN = "local"
 local MDNS_SERVICE_TYPE = "_http._tcp"
 
@@ -125,7 +125,7 @@ local function normalize_candidate(found_item, discovery_responses)
   end
 
   local port = utils.safe_tonumber((found_item.service_info or {}).port) or 80
-  local label = serial_number ~= "" and ("Fibaro HC3 Bridge " .. serial_number) or "Fibaro HC3 Bridge"
+  local label = serial_number ~= "" and ("Fibaro " .. serial_number) or "Fibaro HC3"
 
   return {
     api_version = api_version or 5,
@@ -171,11 +171,6 @@ function discovery.apply_pending_bridge_metadata(driver, device)
   if pending ~= nil then
     set_bridge_identity_fields(device, pending)
     driver.datastore.pending_bridge_data[device.device_network_id] = nil
-  elseif device.device_network_id == HC2_MANUAL_BRIDGE_DNI and device:get_field(fields.DISCOVERY_SOURCE) == nil then
-    device:set_field(fields.DISCOVERY_SOURCE, "manual", { persist = true })
-    device:set_field(fields.CONTROLLER_KIND, "hc2", { persist = true })
-    device:set_field(fields.API_VERSION, 4, { persist = true })
-    device:set_field(fields.PLATFORM, "HC2", { persist = true })
   end
 end
 
@@ -198,22 +193,7 @@ local function create_or_update_mdns_bridge(driver, bridge_data)
   })
 end
 
-local function ensure_manual_hc2_placeholder(driver)
-  if bridge_by_dni(driver, HC2_MANUAL_BRIDGE_DNI) ~= nil then
-    return
-  end
 
-  log.info("Creating manual Fibaro HC2 bridge placeholder")
-  driver:try_create_device({
-    type = "LAN",
-    device_network_id = HC2_MANUAL_BRIDGE_DNI,
-    label = "Fibaro HC2 Manual Bridge",
-    profile = "hc2-bridge",
-    manufacturer = "Fibaro",
-    model = "HC2",
-    vendor_provided_label = "Fibaro HC2 Manual Bridge",
-  })
-end
 
 function discovery.do_mdns_scan(driver)
   local discovery_responses, err = mdns.discover(MDNS_SERVICE_TYPE, MDNS_DOMAIN)
@@ -226,7 +206,7 @@ function discovery.do_mdns_scan(driver)
     local candidate = normalize_candidate(found_item, discovery_responses or {})
     if candidate ~= nil then
       log.info(string.format(
-        "Discovered Fibaro HC3 bridge via mDNS: serial=%s host=%s port=%s",
+        "Discovered Fibaro HC3 via mDNS: serial=%s host=%s port=%s",
         tostring(candidate.serial_number),
         tostring(candidate.host),
         tostring(candidate.port)
@@ -237,8 +217,6 @@ function discovery.do_mdns_scan(driver)
 end
 
 function discovery.discover(driver, _, should_continue)
-  ensure_manual_hc2_placeholder(driver)
-
   while should_continue() do
     discovery.do_mdns_scan(driver)
     socket.sleep(1.0)
