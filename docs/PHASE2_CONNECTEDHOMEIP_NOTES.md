@@ -50,6 +50,70 @@ The runtime is implemented in:
 - [Phase2EnergySimulatorMain.cpp](C:\Prabu\Application\SmartThingsEdgeDrivers\connectedhomeip\examples\evse-app\evse-common\src\Phase2EnergySimulatorMain.cpp)
 - [phase2_main.cpp](C:\Prabu\Application\SmartThingsEdgeDrivers\connectedhomeip\examples\evse-app\linux\phase2_main.cpp)
 
+## Verified Linux/WSL Setup (April 2026)
+
+The following setup/build path has been validated on Linux for
+`origin/virtual-Eclectrical-device`:
+
+1. Install required host tools:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y cmake libdbus-1-dev libavahi-client-dev ninja-build \
+  libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev default-jre
+```
+
+2. Use Python 3.11+ (`python3 --version` must report 3.11 or newer).
+
+If your default `python3` is older, prepend a 3.11 shim path before activation:
+
+```bash
+export PATH=/home/$USER/.local/py311-shim:$PATH
+```
+
+3. Check out required submodules:
+
+```bash
+git submodule update --init --depth 1 \
+	third_party/pigweed/repo \
+	third_party/openthread/repo \
+	third_party/editline/repo
+
+python3 scripts/checkout_submodules.py --shallow --platform linux
+```
+
+4. Bootstrap and activate:
+
+```bash
+source scripts/bootstrap.sh -p linux
+source scripts/activate.sh -p linux
+```
+
+5. Build the simulator:
+
+```bash
+./scripts/build/build_examples.py --target linux-x64-phase2-energy-simulator build
+```
+
+6. Optional but recommended: run one clean build from scratch:
+
+```bash
+rm -rf out/linux-x64-phase2-energy-simulator
+./scripts/build/build_examples.py --target linux-x64-phase2-energy-simulator build
+```
+
+Expected binary:
+
+```bash
+./out/linux-x64-phase2-energy-simulator/chip-phase2-energy-simulator-app
+```
+
+Notes:
+
+- `source/activate.sh` is not a valid path in `connectedhomeip`.
+- The Phase 2 flow requires `phase2-energy-simulator.matter` next to
+	`phase2-energy-simulator.zap` in `examples/evse-app/evse-common`.
+
 ## Current Scope
 
 The Phase 2 host simulator now:
@@ -60,7 +124,10 @@ The Phase 2 host simulator now:
 - Allows Meter Identification to bind on the Utility Meter endpoint instead of assuming endpoint 1
 - Implements timer-driven telemetry (10s intervals) for dynamic voltage, current, and active power reporting, along with continuous energy accumulation.
 
+## Validation Status
+
+- **Linux/WSL Build Execution**: Verified with a clean rebuild on 2026-04-15 for `linux-x64-phase2-energy-simulator`.
+
 ## Remaining Work
 
-- **Linux/WSL Build Execution**: The current development setup is Windows. Compiling and running the Linux-based `chip-phase2-energy-simulator-app` target remains an open item for the future when a Linux or WSL environment is available.
 - Electrical Utility Meter (`0x0511`) driver fingerprint/profile is not yet implemented (Meter Identification has no standard SmartThings capability mapping).

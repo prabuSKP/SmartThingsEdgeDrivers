@@ -6,7 +6,7 @@
 >
 > **Related:** [ELECTRICAL_DEVICE_TYPE_MAPPING.md](./ELECTRICAL_DEVICE_TYPE_MAPPING.md) | [DESIGN_PLAN_ELECTRICAL_DEVICE_CLASS_v2.md](./DESIGN_PLAN_ELECTRICAL_DEVICE_CLASS_v2.md)
 >
-> **Last Updated:** April 12, 2026
+> **Last Updated:** April 15, 2026
 
 ---
 
@@ -65,7 +65,7 @@
 |---|---|---|
 | Ubuntu (native or WSL2) | 22.04+ | Build environment for Matter SDK |
 | Git | Latest | Clone the Matter SDK repository |
-| Python | 3.9+ | Build scripts, ZAP tool, test harness |
+| Python | 3.11+ | Required by current Matter SDK bootstrap/build flow |
 | GN + Ninja | (bundled with SDK) | C++ build system |
 | SmartThings CLI | Latest | Deploy Edge driver to your hub |
 
@@ -90,25 +90,36 @@ cd ~
 git clone --recurse-submodules https://github.com/project-chip/connectedhomeip.git
 cd connectedhomeip
 
-# Checkout a stable release tag (recommended)
-git checkout v1.5.0  # or latest stable tag
-git submodule update --init --recursive
+# Checkout the Electrical simulator branch used by this plan
+git checkout -b virtual-Eclectrical-device origin/virtual-Eclectrical-device
+
+# Always-required submodules for bootstrap/activate
+git submodule update --init --depth 1 \
+  third_party/pigweed/repo \
+  third_party/openthread/repo \
+  third_party/editline/repo
+
+# Linux-only submodule set for host simulation builds
+python3 scripts/checkout_submodules.py --shallow --platform linux
 ```
 
-> **⚠️ Important:** The full repo with submodules is ~10GB. Ensure you have sufficient disk space.
+> **⚠️ Important:** If you need every platform SDK, run `git submodule update -f --init --recursive` (large checkout). For Linux host simulation only, the platform checkout command above is sufficient and faster.
 
 ### Step 1.3: Install Dependencies
 
 ```bash
 # Install system-level dependencies
 sudo apt-get update
-sudo apt-get install -y git gcc g++ pkg-config libssl-dev libdbus-1-dev \
-  libglib2.0-dev libavahi-client-dev ninja-build python3-venv python3-dev \
-  python3-pip unzip libgirepository1.0-dev libcairo2-dev libreadline-dev \
-  generate-ninja
+sudo apt-get install -y git gcc g++ pkg-config cmake curl libssl-dev libdbus-1-dev \
+  libglib2.0-dev libavahi-client-dev ninja-build python3-pip unzip \
+  libgirepository1.0-dev libcairo2-dev libreadline-dev libevent-dev default-jre \
+  python3.11 python3.11-dev python3.11-venv
+
+# Ensure python3 points to 3.11+
+python3 --version
 
 # Bootstrap the Matter build environment
-source scripts/bootstrap.sh
+source scripts/bootstrap.sh -p linux
 ```
 
 > **Note:** `bootstrap.sh` takes 10-20 minutes on first run. It downloads toolchains and sets up the Python virtual environment.
@@ -117,8 +128,17 @@ source scripts/bootstrap.sh
 
 ```bash
 # MUST run this every time you open a new terminal
-source scripts/activate.sh
+source scripts/activate.sh -p linux
 ```
+
+> **Note:** Use `source scripts/activate.sh`. The path `source/activate.sh` is incorrect for this repository.
+>
+> If the host default `python3` is below 3.11, prepend a Python 3.11 shim path before activation:
+>
+> ```bash
+> export PATH=/home/$USER/.local/py311-shim:$PATH
+> source scripts/activate.sh -p linux
+> ```
 
 ---
 
@@ -140,16 +160,23 @@ cd ~/connectedhomeip
 ./out/linux-x64-chip-tool/chip-tool --help
 ```
 
-### Step 2.2: Build `energy-management-app` (Virtual Device)
+### Step 2.2: Build Phase 2 Electrical Simulator (Recommended)
 
-This is the pre-built example that includes all the electrical/energy clusters.
+For `origin/virtual-Eclectrical-device`, build the dedicated Phase 2 simulator target.
 
 ```bash
-# Build the energy management app
-./scripts/build/build_examples.py --target linux-x64-energy-management-app build
+./scripts/build/build_examples.py --target linux-x64-phase2-energy-simulator build
 
 # Verify
-ls -la ./out/linux-x64-energy-management-app/chip-energy-management-app
+ls -la ./out/linux-x64-phase2-energy-simulator/chip-phase2-energy-simulator-app
+```
+
+For an end-to-end reproducibility check, run one clean build by deleting the old
+target output first:
+
+```bash
+rm -rf ./out/linux-x64-phase2-energy-simulator
+./scripts/build/build_examples.py --target linux-x64-phase2-energy-simulator build
 ```
 
 ### Step 2.3: (Optional) Build `all-clusters-app` as fallback
@@ -574,4 +601,4 @@ chip-tool any read-by-id 0xFFFFFFFF 0xFFFFFFFF <node> <endpoint>
 ---
 
 *Document Version: 1.0*
-*Last Updated: April 12, 2026*
+*Last Updated: April 15, 2026*
