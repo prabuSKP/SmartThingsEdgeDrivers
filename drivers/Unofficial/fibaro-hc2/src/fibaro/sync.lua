@@ -331,7 +331,7 @@ local function ensure_child_device(driver, bridge, mapped, existing_child)
 
   local success, err = driver:try_create_device(metadata)
   if not success then
-    log.error(string.format("Failed to create Fibaro child %s: %s", mapped.key, tostring(err)))
+    log.error_with({hub_logs = true}, string.format("[Fibaro] Failed to create child %s: %s", mapped.key, tostring(err)))
   end
 
   return nil
@@ -358,7 +358,7 @@ function sync.sync_bridge_inventory(driver, bridge)
   local has_config, config_err = bridge_has_inventory_config(bridge)
   if not has_config then
     log.info_with({hub_logs = true}, string.format(
-      "Fibaro bridge %s discovered but not ready for inventory sync: %s. "
+      "[Fibaro] Bridge %s discovered but not ready for inventory sync: %s. "
       .. "Please configure credentials in device settings.",
       bridge.label, tostring(config_err)
     ))
@@ -370,7 +370,7 @@ function sync.sync_bridge_inventory(driver, bridge)
   
   local bootstrap, bootstrap_err = bootstrap_bridge(bridge)
   if bootstrap == nil then
-    log.warn_with({hub_logs = true}, string.format("Skipping Fibaro bridge bootstrap for %s: %s", bridge.label, tostring(bootstrap_err)))
+    log.warn_with({hub_logs = true}, string.format("[Fibaro] Skipping bridge bootstrap for %s: %s", bridge.label, tostring(bootstrap_err)))
     bridge:offline()
     return nil, bootstrap_err
   end
@@ -379,7 +379,7 @@ function sync.sync_bridge_inventory(driver, bridge)
   
   local api, api_err = api_for_bridge(bridge)
   if api == nil then
-    log.warn_with({hub_logs = true}, string.format("Skipping Fibaro bridge sync for %s: %s", bridge.label, tostring(api_err)))
+    log.warn_with({hub_logs = true}, string.format("[Fibaro] Skipping bridge sync for %s: %s", bridge.label, tostring(api_err)))
     bridge:offline()
     return nil, api_err
   end
@@ -389,7 +389,7 @@ function sync.sync_bridge_inventory(driver, bridge)
   local payload, err, status = api:get_devices()
   api:shutdown()
   if err ~= nil or status ~= 200 then
-    log.error_with({hub_logs = true}, string.format("Failed to get devices from bridge %s: %s, status: %s", bridge.label, tostring(err), tostring(status)))
+    log.error_with({hub_logs = true}, string.format("[Fibaro] Failed to get devices from bridge %s: %s, status: %s", bridge.label, tostring(err), tostring(status)))
     bridge:offline()
     return nil, err or ("unexpected status " .. tostring(status))
   end
@@ -437,7 +437,7 @@ function sync.sync_bridge_inventory(driver, bridge)
 
   for child_key, child in pairs(children_by_key) do
     if not seen[child_key] then
-      log.info(string.format("Deleting stale Fibaro child %s", child_key))
+      log.info_with({hub_logs = true}, string.format("[Fibaro] Deleting stale child %s", child_key))
       delete_child(driver, child)
     end
   end
@@ -448,7 +448,7 @@ function sync.sync_bridge_inventory(driver, bridge)
       prime_refresh_states_cursor(prime_api, bridge)
       prime_api:shutdown()
     else
-      log.debug(string.format("Unable to prime refreshStates cursor for %s: %s", bridge.label, tostring(prime_err)))
+      log.debug_with({hub_logs = true}, string.format("[Fibaro] Unable to prime refreshStates cursor for %s: %s", bridge.label, tostring(prime_err)))
     end
   end
 
@@ -461,7 +461,7 @@ function sync.poll_bridge(driver, bridge)
   local has_config, config_err = bridge_has_inventory_config(bridge)
   if not has_config then
     log.info_with({hub_logs = true}, string.format(
-      "Fibaro bridge %s poll skipped: %s. Waiting for credentials.",
+      "[Fibaro] Bridge %s poll skipped: %s. Waiting for credentials.",
       bridge.label, tostring(config_err)
     ))
     bridge:offline()
@@ -478,14 +478,14 @@ function sync.poll_bridge(driver, bridge)
 
   local bootstrap, bootstrap_err = bootstrap_bridge(bridge)
   if bootstrap == nil then
-    log.warn_with({hub_logs = true}, string.format("Bootstrap failed for %s: %s", bridge.label, tostring(bootstrap_err)))
+    log.warn_with({hub_logs = true}, string.format("[Fibaro] Bootstrap failed for %s: %s", bridge.label, tostring(bootstrap_err)))
     bridge:offline()
     return nil, bootstrap_err
   end
 
   local api, api_err = api_for_bridge(bridge)
   if api == nil then
-    log.warn_with({hub_logs = true}, string.format("Failed to create API for %s: %s", bridge.label, tostring(api_err)))
+    log.warn_with({hub_logs = true}, string.format("[Fibaro] Failed to create API for %s: %s", bridge.label, tostring(api_err)))
     bridge:offline()
     return nil, api_err
   end
@@ -497,7 +497,7 @@ function sync.poll_bridge(driver, bridge)
 
   if err ~= nil or status ~= 200 or type(payload) ~= "table" then
     log.warn_with({hub_logs = true}, string.format(
-      "refreshStates poll failed for %s, falling back to full inventory sync: %s",
+      "[Fibaro] refreshStates poll failed for %s, falling back to full inventory sync: %s",
       bridge.label,
       tostring(err or status)
     ))
@@ -543,7 +543,7 @@ function sync.poll_bridge(driver, bridge)
     local ok, refresh_err = sync.refresh_child(driver, child)
     if not ok then
       log.warn_with({hub_logs = true}, string.format(
-        "Targeted refresh after refreshStates failed for %s (%s): %s",
+        "[Fibaro] Targeted refresh after refreshStates failed for %s (%s): %s",
         tostring(child.label),
         tostring(device_id),
         tostring(refresh_err)
@@ -564,13 +564,13 @@ function sync.refresh_child(driver, child)
   
   local bridge = utils.find_parent_bridge(driver, child)
   if bridge == nil then
-    log.error_with({hub_logs = true}, string.format("Bridge not found for child %s", child.label))
+    log.error_with({hub_logs = true}, string.format("[Fibaro] Bridge not found for child %s", child.label))
     return nil, "bridge not found"
   end
 
   local api, api_err = api_for_bridge(bridge)
   if api == nil then
-    log.error_with({hub_logs = true}, string.format("Failed to create API for child %s: %s", child.label, tostring(api_err)))
+    log.error_with({hub_logs = true}, string.format("[Fibaro] Failed to create API for child %s: %s", child.label, tostring(api_err)))
     child:offline()
     bridge:offline()
     return nil, api_err
@@ -606,13 +606,13 @@ function sync.execute_child_action(driver, child, action_name, args)
   
   local bridge = utils.find_parent_bridge(driver, child)
   if bridge == nil then
-    log.error_with({hub_logs = true}, string.format("Bridge not found for child %s", child.label))
+    log.error_with({hub_logs = true}, string.format("[Fibaro] Bridge not found for child %s", child.label))
     return nil, "bridge not found"
   end
 
   local api, api_err = api_for_bridge(bridge)
   if api == nil then
-    log.error_with({hub_logs = true}, string.format("Failed to create API for child %s: %s", child.label, tostring(api_err)))
+    log.error_with({hub_logs = true}, string.format("[Fibaro] Failed to create API for child %s: %s", child.label, tostring(api_err)))
     child:offline()
     bridge:offline()
     return nil, api_err
@@ -634,7 +634,7 @@ function sync.execute_child_action(driver, child, action_name, args)
 
   if err ~= nil or (status ~= 200 and status ~= 202 and status ~= 204) then
     log.error_with({hub_logs = true}, string.format(
-      "Action %s failed for child %s: err=%s, status=%s",
+      "[Fibaro] Action %s failed for child %s: err=%s, status=%s",
       tostring(action_name), child.label, tostring(err), tostring(status)
     ))
     api:shutdown()
@@ -656,7 +656,7 @@ function sync.execute_child_action(driver, child, action_name, args)
     end
 
     log.info_with({hub_logs = true}, string.format(
-      "Post-action refresh attempt %d/%d for child %s (device_id=%s)",
+      "[Fibaro] Post-action refresh attempt %d/%d for child %s (device_id=%s)",
       attempt,
       attempts,
       tostring(child.label),
@@ -678,7 +678,7 @@ function sync.execute_child_action(driver, child, action_name, args)
     end
   end
 
-  log.warn_with({hub_logs = true}, string.format("Post-action refresh failed for %s after %d attempts", child.label, attempts))
+  log.warn_with({hub_logs = true}, string.format("[Fibaro] Post-action refresh failed for %s after %d attempts", child.label, attempts))
   api:shutdown()
   return nil, last_err or "refresh after action failed"
 end
@@ -696,8 +696,8 @@ function sync.reschedule_bridge_poll(driver, bridge)
 
   local has_config = bridge_has_inventory_config(bridge)
   if not has_config then
-    log.info(string.format(
-      "Fibaro bridge %s poll scheduling deferred: waiting for endpoint and credentials.",
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] Bridge %s poll scheduling deferred: waiting for endpoint and credentials.",
       bridge.label
     ))
     return

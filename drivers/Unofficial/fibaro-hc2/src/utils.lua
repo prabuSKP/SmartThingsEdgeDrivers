@@ -41,7 +41,7 @@ function utils.labeled_socket_builder(label, ssl_config)
   end
 
   local function make_socket(host, port, wrap_ssl)
-    log.info(string.format("%sCreating TCP socket", label))
+    log.info_with({hub_logs = true}, string.format("[Fibaro] %sCreating TCP socket", label))
     local sock, err = socket.tcp()
     if err ~= nil or not sock then
       return nil, (err or "unknown error creating TCP socket")

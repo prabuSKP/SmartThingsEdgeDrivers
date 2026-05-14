@@ -202,7 +202,7 @@ end
 
 function fibaro_api:execute_scene(scene_id, body, headers)
   local payload = json.encode(body or {})
-  log.info(string.format("Executing Fibaro scene %s", tostring(scene_id)))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Executing scene %s", tostring(scene_id)))
   local merged_headers = copy_headers(self.headers)
   for k, v in pairs(headers or {}) do
     merged_headers[k] = v
@@ -218,7 +218,7 @@ end
 
 function fibaro_api:kill_scene(scene_id, body, headers)
   local payload = json.encode(body or {})
-  log.info(string.format("Killing Fibaro scene %s", tostring(scene_id)))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Killing scene %s", tostring(scene_id)))
   local merged_headers = copy_headers(self.headers)
   for k, v in pairs(headers or {}) do
     merged_headers[k] = v

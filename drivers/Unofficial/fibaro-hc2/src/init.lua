@@ -37,5 +37,5 @@ end
 -- fibaro_hc2:call_with_delay(3, discovery.do_mdns_scan, "Fibaro HC3 mDNS initial scan")
 -- fibaro_hc2:call_on_schedule(MDNS_SCAN_INTERVAL_SECONDS, discovery.do_mdns_scan, "Fibaro HC3 mDNS scan")
 
-log.info("Starting Fibaro driver")
+log.info_with({hub_logs = true}, "[Fibaro] Starting driver")
 fibaro_hc2:run()

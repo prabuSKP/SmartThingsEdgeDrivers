@@ -1,12 +1,31 @@
 local socket = require "cosock.socket"
 local Request = require "luncheon.request"
 local Response = require "luncheon.response"
+local log = require "log"
 
 local lb_utils = require "lunchbox.util"
 local utils = require "utils"
 
 local RestClient = {}
 RestClient.__index = RestClient
+
+local function copy_response_headers(source, target)
+  for header in source.headers:iter() do
+    target.headers:append_chunk(header)
+  end
+end
+
+local function empty_body_response(original_response)
+  local full_response = Response.new(original_response.status, nil)
+  copy_response_headers(original_response, full_response)
+  full_response._received_body = true
+  full_response._parsed_headers = true
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] HTTP response has no body framing, treating status %s as empty body",
+    tostring(original_response.status)
+  ))
+  return full_response
+end
 
 local function connect(client)
   local use_ssl = client.base_url.scheme == "https"
@@ -48,8 +67,16 @@ local function recv_additional_response(original_response, sock)
   local headers = original_response:get_headers()
   local content_length = tonumber(headers:get_one("Content-Length") or "0")
 
-  for header in original_response.headers:iter() do
-    full_response.headers:append_chunk(header)
+  copy_response_headers(original_response, full_response)
+
+  if content_length <= 0 then
+    full_response._received_body = true
+    full_response._parsed_headers = true
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] HTTP response has Content-Length 0, treating status %s as empty body",
+      tostring(original_response.status)
+    ))
+    return full_response
   end
 
   local total = 0
@@ -78,9 +105,7 @@ end
 
 local function parse_chunked_response(original_response, sock)
   local full_response = Response.new(original_response.status, nil)
-  for header in original_response.headers:iter() do
-    full_response.headers:append_chunk(header)
-  end
+  copy_response_headers(original_response, full_response)
 
   -- Read the first chunk size line directly from the socket.
   -- Do NOT call original_response:get_body() here because that triggers
@@ -149,11 +174,11 @@ local function handle_response(sock)
     return recv_additional_response(initial_recv, sock)
   end
 
-  if headers:get_one("Transfer-Encoding") == "chunked" then
+  if tostring(headers:get_one("Transfer-Encoding") or ""):lower() == "chunked" then
     return parse_chunked_response(initial_recv, sock)
   end
 
-  return initial_recv, nil, nil
+  return empty_body_response(initial_recv), nil, nil
 end
 
 local function execute_request(client, request, retry_fn)
