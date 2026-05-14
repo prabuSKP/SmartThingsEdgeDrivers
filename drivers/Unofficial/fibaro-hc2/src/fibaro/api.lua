@@ -60,6 +60,27 @@ local function copy_headers(source)
   return headers
 end
 
+local function encode_action_body(body)
+  body = body or { args = {} }
+
+  if type(body) ~= "table" then
+    return json.encode(body)
+  end
+
+  if type(body.args) ~= "table" or next(body.args) ~= nil then
+    return json.encode(body)
+  end
+
+  local fields = { "\"args\":[]" }
+  for k, v in pairs(body) do
+    if k ~= "args" then
+      table.insert(fields, string.format("%s:%s", json.encode(tostring(k)), json.encode(v)))
+    end
+  end
+
+  return "{" .. table.concat(fields, ",") .. "}"
+end
+
 local function build_base_url(config)
   local port = config.port or (config.scheme == "https" and 443 or 80)
   return string.format("%s://%s:%d", config.scheme or "http", config.host, port)
@@ -233,7 +254,7 @@ function fibaro_api:kill_scene(scene_id, body, headers)
 end
 
 function fibaro_api:call_action(device_id, action_name, body)
-  local payload = json.encode(body or { args = {} })
+  local payload = encode_action_body(body)
   log.info_with({hub_logs = true}, string.format("[Fibaro] API Request: POST /api/devices/%s/action/%s", tostring(device_id), tostring(action_name)))
   local headers_str = ""
   if self.headers then
