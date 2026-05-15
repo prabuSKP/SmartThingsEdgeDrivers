@@ -1,3 +1,4 @@
+local log = require "log"
 local utils = require "utils"
 
 local mapper = {}
@@ -30,22 +31,36 @@ end
 
 function mapper.map_device(device)
   if type(device) ~= "table" or device.id == nil then
+    log.info_with({hub_logs = true}, "[Fibaro] map_device: invalid device payload")
     return nil, "invalid device payload"
   end
 
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] map_device: id=%s, name=%s, type=%s, base_type=%s, role=%s",
+    tostring(device.id),
+    tostring(device.label),
+    tostring(device.type),
+    tostring(device.base_type),
+    tostring(device.device_role)
+  ))
+
   if device.is_gateway then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s is a gateway/controller, skipping", tostring(device.id)))
     return nil, "controller device"
   end
 
   if device.is_user then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s is a user device, skipping", tostring(device.id)))
     return nil, "user device"
   end
 
   if device.is_plugin then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s is a plugin/virtual device, skipping", tostring(device.id)))
     return nil, "plugin or virtual device"
   end
 
   if device.enabled == false then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s is disabled, skipping", tostring(device.id)))
     return nil, "disabled device"
   end
 
@@ -59,7 +74,16 @@ function mapper.map_device(device)
   local lowered_role = device_role:lower()
   local label = device.label or ("Fibaro Device " .. tostring(device.id))
 
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Device %s: actions=%s, interfaces=%s, value=%s",
+    tostring(device.id),
+    tostring(actions),
+    tostring(interfaces),
+    tostring(device.value)
+  ))
+
   if has_action(actions, "setValue") then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s mapped as DIMMER (has setValue action)", tostring(device.id)))
     return {
       id = device.id,
       key = utils.child_key_for_id(device.id),
@@ -72,6 +96,7 @@ function mapper.map_device(device)
   end
 
   if has_action(actions, "turnOn") and has_action(actions, "turnOff") then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s mapped as SWITCH (has turnOn/turnOff actions)", tostring(device.id)))
     return {
       id = device.id,
       key = utils.child_key_for_id(device.id),
@@ -88,6 +113,7 @@ function mapper.map_device(device)
     or contains(lowered_role, "motion")
     or has_interface(interfaces, "motionSensor")
   then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s mapped as MOTION (type/role/interface match)", tostring(device.id)))
     return {
       id = device.id,
       key = utils.child_key_for_id(device.id),
@@ -110,6 +136,7 @@ function mapper.map_device(device)
     or has_interface(interfaces, "contactSensor")
     or has_interface(interfaces, "doorWindowSensor")
   then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s mapped as CONTACT (type/role/interface match)", tostring(device.id)))
     return {
       id = device.id,
       key = utils.child_key_for_id(device.id),
@@ -122,6 +149,7 @@ function mapper.map_device(device)
   end
 
   if has_value(device) then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s mapped as GENERIC-SENSOR (has value property)", tostring(device.id)))
     return {
       id = device.id,
       key = utils.child_key_for_id(device.id),
@@ -133,6 +161,7 @@ function mapper.map_device(device)
     }
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s not mapped: unsupported device shape", tostring(device.id)))
   return nil, "unsupported device shape"
 end
 

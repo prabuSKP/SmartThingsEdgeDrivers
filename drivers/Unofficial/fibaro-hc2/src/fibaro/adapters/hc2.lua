@@ -1,3 +1,4 @@
+local log = require "log"
 local utils = require "utils"
 
 local hc2 = {
@@ -55,6 +56,13 @@ function hc2.normalize_scene_list(payload)
 end
 
 function hc2.normalize_device(raw_device)
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] HC2 normalize_device: id=%s, name=%s, type=%s",
+    tostring(raw_device.id),
+    tostring(raw_device.name),
+    tostring(raw_device.type)
+  ))
+  
   local props = type(raw_device.properties) == "table" and raw_device.properties or {}
   local actions = type(raw_device.actions) == "table" and raw_device.actions or {}
   local interfaces = type(raw_device.interfaces) == "table" and raw_device.interfaces or {}
@@ -64,7 +72,15 @@ function hc2.normalize_device(raw_device)
     dead = dead:lower() == "true"
   end
 
-  return {
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] HC2 device properties: value=%s, level=%s, dead=%s, deviceRole=%s",
+    tostring(value),
+    tostring(utils.safe_tonumber(value)),
+    tostring(dead),
+    tostring(props.deviceRole)
+  ))
+
+  local normalized = {
     controller = hc2.NAME,
     id = raw_device.id,
     key = utils.child_key_for_id(raw_device.id),
@@ -90,6 +106,19 @@ function hc2.normalize_device(raw_device)
     unit = props.unit,
     raw = raw_device,
   }
+  
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] HC2 normalized result: id=%s, label=%s, value=%s, level=%s, dead=%s, is_plugin=%s, is_gateway=%s",
+    tostring(normalized.id),
+    tostring(normalized.label),
+    tostring(normalized.value),
+    tostring(normalized.level),
+    tostring(normalized.dead),
+    tostring(normalized.is_plugin),
+    tostring(normalized.is_gateway)
+  ))
+  
+  return normalized
 end
 
 function hc2.normalize_scene(raw_scene)

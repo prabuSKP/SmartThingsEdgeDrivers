@@ -23,23 +23,32 @@ end
 
 local function process_response(response, err)
   if err ~= nil then
+    log.error_with({hub_logs = true}, string.format("[Fibaro] API response error: %s", tostring(err)))
     return nil, err, nil
   end
 
   if response == nil then
+    log.error_with({hub_logs = true}, "[Fibaro] No response received from server")
     return nil, "no response received", nil
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Response status: %d", response.status or 0))
+
   local body = response:get_body() or ""
   if body == "" then
+    log.info_with({hub_logs = true}, "[Fibaro] Empty response body")
     return nil, nil, response.status
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Response body (first 500 chars): %s", body:sub(1, 500)))
+
   local ok, decoded = pcall(json.decode, body)
   if ok then
+    log.info_with({hub_logs = true}, "[Fibaro] Successfully parsed JSON response")
     return decoded, nil, response.status
   end
 
+  log.info_with({hub_logs = true}, "[Fibaro] Response body is not JSON, returning as plain text")
   return body, nil, response.status
 end
 
@@ -86,25 +95,29 @@ function fibaro_api:shutdown()
 end
 
 function fibaro_api:get_devices()
-  log.info("Requesting Fibaro inventory: GET /api/devices")
+  log.info_with({hub_logs = true}, "[Fibaro] API Request: GET /api/devices")
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
   local response, err = self.client:get("/api/devices", self.headers, retry_fn(3))
   return process_response(response, err)
 end
 
 function fibaro_api:get_device(device_id)
-  log.info(string.format("Requesting Fibaro device state: GET /api/devices/%s", tostring(device_id)))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request: GET /api/devices/%s", tostring(device_id)))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
   local response, err = self.client:get(string.format("/api/devices/%s", tostring(device_id)), self.headers, retry_fn(3))
   return process_response(response, err)
 end
 
 function fibaro_api:get_login_status()
-  log.info("Requesting Fibaro bootstrap: GET /api/loginStatus")
+  log.info_with({hub_logs = true}, "[Fibaro] API Request: GET /api/loginStatus")
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
   local response, err = self.client:get("/api/loginStatus", self.headers, retry_fn(3))
   return process_response(response, err)
 end
 
 function fibaro_api:get_settings_info()
-  log.info("Requesting Fibaro bootstrap: GET /api/settings/info")
+  log.info_with({hub_logs = true}, "[Fibaro] API Request: GET /api/settings/info")
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
   local response, err = self.client:get("/api/settings/info", self.headers, retry_fn(3))
   return process_response(response, err)
 end
@@ -115,7 +128,8 @@ function fibaro_api:get_refresh_states(last)
     suffix = "?last=" .. tostring(last)
   end
 
-  log.info("Requesting Fibaro incremental state feed: GET /api/refreshStates" .. suffix)
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request: GET /api/refreshStates%s", suffix))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
   local response, err = self.client:get("/api/refreshStates" .. suffix, self.headers, retry_fn(3))
   return process_response(response, err)
 end
@@ -179,7 +193,9 @@ end
 
 function fibaro_api:call_action(device_id, action_name, body)
   local payload = json.encode(body or { args = {} })
-  log.info(string.format("Calling Fibaro action %s for device %s", tostring(action_name), tostring(device_id)))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request: POST /api/devices/%s/action/%s", tostring(device_id), tostring(action_name)))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Body: %s", payload))
   local response, err = self.client:post(
     string.format("/api/devices/%s/action/%s", tostring(device_id), tostring(action_name)),
     payload,
