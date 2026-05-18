@@ -1,6 +1,5 @@
 local log = require "log"
 local mdns = require "st.mdns"
-local net_utils = require "st.net_utils"
 local socket = require "cosock.socket"
 
 local fields = require "fields"
@@ -93,93 +92,6 @@ local function parse_txt_items(text_list)
   return parsed
 end
 
-local function normalize_candidate(found_item, discovery_responses)
-  if type(found_item) ~= "table" then
-    log.info_with({hub_logs = true}, "[Fibaro] normalize_candidate: found_item is not a table")
-    return nil
-  end
-
-  -- Log raw mDNS response data
-  log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] mDNS Response: service_type=%s, name=%s",
-    tostring((found_item.service_info or {}).service_type),
-    tostring((found_item.service_info or {}).name)
-  ))
-  log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] mDNS Response: host_info=%s, port=%s",
-    tostring((found_item.host_info or {}).address),
-    tostring((found_item.service_info or {}).port)
-  ))
-
-  if ((found_item.service_info or {}).service_type) ~= MDNS_SERVICE_TYPE then
-    log.info_with({hub_logs = true}, string.format(
-      "[Fibaro] normalize_candidate: service_type mismatch, expected %s, got %s",
-      MDNS_SERVICE_TYPE,
-      tostring((found_item.service_info or {}).service_type)
-    ))
-    return nil
-  end
-
-  local ip = ((found_item.host_info or {}).address)
-  if not net_utils.validate_ipv4_string(ip) then
-    log.info_with({hub_logs = true}, string.format("[Fibaro] normalize_candidate: invalid IP address: %s", tostring(ip)))
-    return nil
-  end
-
-  log.info_with({hub_logs = true}, string.format("[Fibaro] normalize_candidate: processing mDNS response from IP: %s", ip))
-
-  local txt_list = text_list_for_found_item(found_item)
-  for _, item in ipairs(find_text_in_answers_by_ip(ip, discovery_responses)) do
-    table.insert(txt_list, item)
-  end
-
-  -- Log TXT records
-  log.info_with({hub_logs = true}, string.format("[Fibaro] mDNS TXT records: %s", table.concat(txt_list, ", ")))
-
-  local txt = parse_txt_items(txt_list)
-  local serial_number = utils.trim(txt.serialNumber or txt.serialnumber or "")
-  local platform = tostring(txt.platform or ""):upper()
-  local api_version = utils.safe_tonumber(txt.apiVersion)
-  
-  log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] normalize_candidate: serial=%s, platform=%s, api_version=%s",
-    serial_number, platform, tostring(api_version)
-  ))
-  
-  local inferred_kind = utils.controller_kind_from_info({
-    platform = platform,
-    serialNumber = serial_number,
-  })
-
-  if inferred_kind ~= "hc3" then
-    log.info_with({hub_logs = true}, string.format(
-      "[Fibaro] normalize_candidate: inferred_kind=%s, not hc3, skipping",
-      tostring(inferred_kind)
-    ))
-    return nil
-  end
-
-  local port = utils.safe_tonumber((found_item.service_info or {}).port) or 80
-  local label = serial_number ~= "" and ("Fibaro " .. serial_number) or "Fibaro HC3"
-
-  log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] normalize_candidate: valid HC3 candidate found: serial=%s, host=%s, port=%d",
-    serial_number, ip, port
-  ))
-
-  return {
-    api_version = api_version or 5,
-    controller_kind = "hc3",
-    device_network_id = serial_number ~= "" and ("fibaro-hc3:" .. serial_number) or ("fibaro-hc3:" .. ip:gsub("%.", "-")),
-    discovery_source = "mdns",
-    host = ip,
-    label = label,
-    platform = platform ~= "" and platform or "HC3",
-    port = port,
-    scheme = port == 443 and "https" or "http",
-    serial_number = serial_number,
-  }
-end
 
 local function cache_bridge_metadata(driver, bridge_data)
   driver.datastore.pending_bridge_data = driver.datastore.pending_bridge_data or {}
@@ -244,6 +156,19 @@ function discovery.do_mdns_scan(driver)
     return
   end
 
+  -- Log raw discovery responses for debugging
+  local json = require "st.json"
+  local raw_response_str = ""
+  if discovery_responses then
+    local ok, json_str = pcall(json.encode, discovery_responses)
+    if ok then
+      raw_response_str = json_str
+    else
+      raw_response_str = tostring(discovery_responses)
+    end
+  end
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Raw mDNS discovery responses: %s", raw_response_str))
+
   local found_count = #(discovery_responses or {}).found or 0
   log.info_with({hub_logs = true}, string.format("[Fibaro] mDNS scan found %d responses", found_count))
 
@@ -260,7 +185,7 @@ function discovery.do_mdns_scan(driver)
   end
 
   for _, found_item in ipairs((discovery_responses or {}).found or {}) do
-    local candidate = normalize_candidate(found_item, discovery_responses or {})
+    local candidate = discovery_provider.normalize_candidate(found_item, discovery_responses or {})
     if candidate ~= nil then
       log.info_with({hub_logs = true}, string.format(
         "[Fibaro] Discovered Fibaro HC3 via mDNS: serial=%s host=%s port=%s",
