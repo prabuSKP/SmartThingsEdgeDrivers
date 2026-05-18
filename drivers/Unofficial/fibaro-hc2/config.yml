@@ -5,3 +5,12 @@ permissions:
   discovery: {}
 description: "SmartThings Edge driver for Fibaro HC2 and HC3 controllers via Local API"
 vendorSupportInformation: "https://support.smartthings.com"
+preferences:
+  - title: "Hardcoded HC3 IP Address"
+    name: "hardcodedIp"
+    description: "Fallback IP address for HC3 discovery when mDNS and find.fibaro.com fail"
+    required: false
+    preferenceType: "string"
+    definition:
+      stringType: "text"
+      default: "192.168.0.126"
