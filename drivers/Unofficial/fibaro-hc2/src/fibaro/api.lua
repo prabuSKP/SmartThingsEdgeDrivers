@@ -61,7 +61,8 @@ local function copy_headers(source)
 end
 
 local function build_base_url(config)
-  return string.format("%s://%s:%d", config.scheme or "http", config.host, config.port)
+  local port = config.port or (config.scheme == "https" and 443 or 80)
+  return string.format("%s://%s:%d", config.scheme or "http", config.host, port)
 end
 
 function fibaro_api.new(config, label)
@@ -96,28 +97,60 @@ end
 
 function fibaro_api:get_devices()
   log.info_with({hub_logs = true}, "[Fibaro] API Request: GET /api/devices")
-  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
+  local headers_str = ""
+  if self.headers then
+    local header_parts = {}
+    for k, v in pairs(self.headers) do
+      table.insert(header_parts, string.format("%s: %s", tostring(k), tostring(v)))
+    end
+    headers_str = table.concat(header_parts, ", ")
+  end
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", headers_str))
   local response, err = self.client:get("/api/devices", self.headers, retry_fn(3))
   return process_response(response, err)
 end
 
 function fibaro_api:get_device(device_id)
   log.info_with({hub_logs = true}, string.format("[Fibaro] API Request: GET /api/devices/%s", tostring(device_id)))
-  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
+  local headers_str = ""
+  if self.headers then
+    local header_parts = {}
+    for k, v in pairs(self.headers) do
+      table.insert(header_parts, string.format("%s: %s", tostring(k), tostring(v)))
+    end
+    headers_str = table.concat(header_parts, ", ")
+  end
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", headers_str))
   local response, err = self.client:get(string.format("/api/devices/%s", tostring(device_id)), self.headers, retry_fn(3))
   return process_response(response, err)
 end
 
 function fibaro_api:get_login_status()
   log.info_with({hub_logs = true}, "[Fibaro] API Request: GET /api/loginStatus")
-  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
+  local headers_str = ""
+  if self.headers then
+    local header_parts = {}
+    for k, v in pairs(self.headers) do
+      table.insert(header_parts, string.format("%s: %s", tostring(k), tostring(v)))
+    end
+    headers_str = table.concat(header_parts, ", ")
+  end
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", headers_str))
   local response, err = self.client:get("/api/loginStatus", self.headers, retry_fn(3))
   return process_response(response, err)
 end
 
 function fibaro_api:get_settings_info()
   log.info_with({hub_logs = true}, "[Fibaro] API Request: GET /api/settings/info")
-  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
+  local headers_str = ""
+  if self.headers then
+    local header_parts = {}
+    for k, v in pairs(self.headers) do
+      table.insert(header_parts, string.format("%s: %s", tostring(k), tostring(v)))
+    end
+    headers_str = table.concat(header_parts, ", ")
+  end
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", headers_str))
   local response, err = self.client:get("/api/settings/info", self.headers, retry_fn(3))
   return process_response(response, err)
 end
@@ -129,7 +162,15 @@ function fibaro_api:get_refresh_states(last)
   end
 
   log.info_with({hub_logs = true}, string.format("[Fibaro] API Request: GET /api/refreshStates%s", suffix))
-  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
+  local headers_str = ""
+  if self.headers then
+    local header_parts = {}
+    for k, v in pairs(self.headers) do
+      table.insert(header_parts, string.format("%s: %s", tostring(k), tostring(v)))
+    end
+    headers_str = table.concat(header_parts, ", ")
+  end
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", headers_str))
   local response, err = self.client:get("/api/refreshStates" .. suffix, self.headers, retry_fn(3))
   return process_response(response, err)
 end
@@ -194,7 +235,15 @@ end
 function fibaro_api:call_action(device_id, action_name, body)
   local payload = json.encode(body or { args = {} })
   log.info_with({hub_logs = true}, string.format("[Fibaro] API Request: POST /api/devices/%s/action/%s", tostring(device_id), tostring(action_name)))
-  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", tostring(self.headers)))
+  local headers_str = ""
+  if self.headers then
+    local header_parts = {}
+    for k, v in pairs(self.headers) do
+      table.insert(header_parts, string.format("%s: %s", tostring(k), tostring(v)))
+    end
+    headers_str = table.concat(header_parts, ", ")
+  end
+  log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", headers_str))
   log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Body: %s", payload))
   local response, err = self.client:post(
     string.format("/api/devices/%s/action/%s", tostring(device_id), tostring(action_name)),

@@ -353,6 +353,8 @@ local function prime_refresh_states_cursor(api, bridge)
 end
 
 function sync.sync_bridge_inventory(driver, bridge)
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Starting sync_bridge_inventory for bridge: %s", bridge.label))
+  
   local has_config, config_err = bridge_has_inventory_config(bridge)
   if not has_config then
     log.info_with({hub_logs = true}, string.format(
@@ -364,6 +366,8 @@ function sync.sync_bridge_inventory(driver, bridge)
     return nil, config_err
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Bridge %s has valid configuration, proceeding with bootstrap", bridge.label))
+  
   local bootstrap, bootstrap_err = bootstrap_bridge(bridge)
   if bootstrap == nil then
     log.warn_with({hub_logs = true}, string.format("Skipping Fibaro bridge bootstrap for %s: %s", bridge.label, tostring(bootstrap_err)))
@@ -371,6 +375,8 @@ function sync.sync_bridge_inventory(driver, bridge)
     return nil, bootstrap_err
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Bridge %s bootstrap successful, creating API connection", bridge.label))
+  
   local api, api_err = api_for_bridge(bridge)
   if api == nil then
     log.warn_with({hub_logs = true}, string.format("Skipping Fibaro bridge sync for %s: %s", bridge.label, tostring(api_err)))
@@ -378,6 +384,8 @@ function sync.sync_bridge_inventory(driver, bridge)
     return nil, api_err
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Fetching devices from bridge %s", bridge.label))
+  
   local payload, err, status = api:get_devices()
   api:shutdown()
   if err ~= nil or status ~= 200 then
@@ -386,6 +394,8 @@ function sync.sync_bridge_inventory(driver, bridge)
     return nil, err or ("unexpected status " .. tostring(status))
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Successfully fetched devices from bridge %s, processing inventory", bridge.label))
+  
   bridge:online()
   local adapter = bootstrap.adapter or controller_for_bridge(bridge, payload)
   local discovered = adapter.normalize_device_list(payload)
@@ -480,6 +490,8 @@ function sync.poll_bridge(driver, bridge)
     return nil, api_err
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Calling refreshStates API for bridge %s with last=%s", bridge.label, tostring(last)))
+  
   local payload, err, status = api:get_refresh_states(last)
   api:shutdown()
 
@@ -492,6 +504,8 @@ function sync.poll_bridge(driver, bridge)
     return sync.sync_bridge_inventory(driver, bridge)
   end
 
+  log.info_with({hub_logs = true}, string.format("[Fibaro] refreshStates API call successful for %s", bridge.label))
+  
   bridge:online()
 
   if payload.last ~= nil then
@@ -612,6 +626,9 @@ function sync.execute_child_action(driver, child, action_name, args)
     "[Fibaro] Calling action %s on device_id=%s (kind=%s)",
     tostring(action_name), tostring(hc2_device_id), tostring(kind)
   ))
+  
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Calling action %s on device_id=%s with body: %s", 
+    tostring(action_name), tostring(hc2_device_id), tostring(adapter.build_action_body(args))))
   
   local _, err, status = api:call_action(hc2_device_id, action_name, adapter.build_action_body(args))
 
