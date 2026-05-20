@@ -82,12 +82,19 @@ local function parse_chunked_response(original_response, sock)
     full_response.headers:append_chunk(header)
   end
 
-  local original_body, err = original_response:get_body()
-  if type(original_body) ~= "string" or err ~= nil then
-    return original_body, (err or "unexpected nil in error position")
+  -- Read the first chunk size line directly from the socket.
+  -- Do NOT call original_response:get_body() here because that triggers
+  -- luncheon's internal chunked body parser which uses self._source(pattern),
+  -- but our source function (created in handle_response) only supports
+  -- line-by-line reading via sock:receive("*l") and ignores byte-count
+  -- arguments, causing tonumber(nil, 16) crash on real Fibaro devices
+  -- that use Transfer-Encoding: chunked.
+  local chunk_size_line, line_err = sock:receive("*l")
+  if not chunk_size_line then
+    return nil, "failed to read chunk size: " .. tostring(line_err)
   end
 
-  local next_chunk_bytes = tonumber(original_body, 16)
+  local next_chunk_bytes = tonumber(chunk_size_line, 16)
   local next_chunk_body = ""
   local bytes_read = 0
   local expecting_body = true
