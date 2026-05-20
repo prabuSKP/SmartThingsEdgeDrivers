@@ -427,29 +427,38 @@ function discovery_provider.discover_with_fallback(driver, options)
   end
   
   -- Tier 1: mDNS
-  devices, _ = discovery_provider.discover_via_mdns(driver)
-  if #devices > 0 then
-    log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via mDNS: %d devices", #devices))
-    return devices
-  end
+  -- devices, _ = discovery_provider.discover_via_mdns(driver)
+  -- if #devices > 0 then
+  --  log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via mDNS: %d devices", #devices))
+  --  return devices
+  -- end
   
   -- Tier 2: find.fibaro.com
-  log.info_with({hub_logs = true}, "[Fibaro] mDNS found no devices, falling back to find.fibaro.com")
-  devices, _ = discovery_provider.discover_via_find_fibaro(driver)
-  if #devices > 0 then
-    log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via find.fibaro.com: %d devices", #devices))
-    return devices
-  end
+  -- log.info_with({hub_logs = true}, "[Fibaro] mDNS found no devices, falling back to find.fibaro.com")
+  -- devices, _ = discovery_provider.discover_via_find_fibaro(driver)
+  -- if #devices > 0 then
+  --   log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via find.fibaro.com: %d devices", #devices))
+  --  return devices
+  -- end
   
   -- Tier 3: Hardcoded IP
-  log.info_with({hub_logs = true}, "[Fibaro] find.fibaro.com found no devices, falling back to hardcoded IP")
-  local hardcoded_ip = options.hardcoded_ip or DEFAULT_HARDCODED_IP
-  devices, _ = discovery_provider.discover_via_hardcoded(driver, hardcoded_ip)
-  if #devices > 0 then
+   log.info_with({hub_logs = true}, "[Fibaro] find.fibaro.com found no devices, falling back to hardcoded IP")
+   local hardcoded_ip = options.hardcoded_ip or DEFAULT_HARDCODED_IP
+   devices, _ = discovery_provider.discover_via_hardcoded(driver, hardcoded_ip)
+   if #devices > 0 then
     log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Using hardcoded IP: %s", hardcoded_ip))
     return devices
-  end
+   end
   
+  -- Tier 4: Hardcoded IP - 2
+   log.info_with({hub_logs = true}, "[Fibaro] No devices with hardcoded ip - 1, falling back to hardcoded IP 2")
+   local hardcoded_ip_2 = "192.168.0.123"
+   devices, _ = discovery_provider.discover_via_hardcoded(driver, hardcoded_ip_2)
+   if #devices > 0 then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Using hardcoded IP 2: %s", hardcoded_ip_2))
+    return devices
+   end
+
   log.warn_with({hub_logs = true}, "[Fibaro] ✗ All discovery methods failed, no devices found")
   return {}
 end

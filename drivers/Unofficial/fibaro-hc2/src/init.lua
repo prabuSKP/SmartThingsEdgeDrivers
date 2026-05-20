@@ -34,8 +34,8 @@ if fibaro_hc2.datastore.pending_bridge_data == nil then
   fibaro_hc2.datastore.pending_bridge_data = {}
 end
 
-fibaro_hc2:call_with_delay(3, discovery.do_mdns_scan, "Fibaro HC3 mDNS initial scan")
-fibaro_hc2:call_on_schedule(MDNS_SCAN_INTERVAL_SECONDS, discovery.do_mdns_scan, "Fibaro HC3 mDNS scan")
+-- fibaro_hc2:call_with_delay(3, discovery.do_mdns_scan, "Fibaro HC3 mDNS initial scan")
+-- fibaro_hc2:call_on_schedule(MDNS_SCAN_INTERVAL_SECONDS, discovery.do_mdns_scan, "Fibaro HC3 mDNS scan")
 
 log.info("Starting Fibaro driver")
 fibaro_hc2:run()
