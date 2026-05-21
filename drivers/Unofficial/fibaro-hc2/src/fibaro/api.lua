@@ -275,4 +275,10 @@ function fibaro_api:call_action(device_id, action_name, body)
   return process_response(response, err)
 end
 
+function fibaro_api:get_rooms()
+  log.info_with({hub_logs = true}, "[Fibaro] API Request: GET /api/rooms")
+  local response, err = self.client:get("/api/rooms", self.headers, retry_fn(3))
+  return process_response(response, err)
+end
+
 return fibaro_api

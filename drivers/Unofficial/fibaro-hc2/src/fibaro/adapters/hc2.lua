@@ -101,6 +101,7 @@ function hc2.normalize_device(raw_device)
       or tostring(raw_device.type or "") == "HC_user",
     is_user = tostring(raw_device.type or "") == "HC_user" or tostring(raw_device.type or "") == "VOIP_user",
     parent_id = utils.safe_tonumber(raw_device.parentId) or 0,
+    room_id = utils.safe_tonumber(raw_device.roomID) or 0,
     device_role = tostring(props.deviceRole or ""),
     device_control_type = props.deviceControlType,
     unit = props.unit,

@@ -48,6 +48,13 @@ local function expected_state_matcher(kind, action_name, args)
         return value_matches_level(normalized_device.level or normalized_device.value, 0)
       end
     end
+  elseif kind == "blind" then
+    if action_name == "setValue" then
+      local expected = utils.clamp(utils.safe_tonumber(args and args[1]) or 0, 0, 99)
+      return function(normalized_device)
+        return value_matches_level(normalized_device.level or normalized_device.value, expected)
+      end
+    end
   end
 
   return nil
@@ -287,6 +294,44 @@ local function emit_child_state(device, normalized_device, kind)
     local numeric_value = normalized_device.level or 0
     device:emit_event(numeric_value > 0 and capabilities.switch.switch.on() or capabilities.switch.switch.off())
     device:emit_event(capabilities.switchLevel.level(utils.clamp(math.floor(numeric_value + 0.5), 0, 99)))
+  elseif kind == "blind" then
+    local level = utils.safe_tonumber(normalized_device.level or normalized_device.value) or 0
+    local clamped = utils.clamp(math.floor(level + 0.5), 0, 99)
+    if clamped == 0 then
+      device:emit_event(capabilities.windowShade.windowShade.closed())
+    elseif clamped >= 99 then
+      device:emit_event(capabilities.windowShade.windowShade.open())
+    else
+      device:emit_event(capabilities.windowShade.windowShade.partially_open())
+    end
+    device:emit_event(capabilities.windowShadeLevel.shadeLevel(clamped))
+  elseif kind == "smoke-detector" then
+    if utils.value_is_truthy(value) then
+      device:emit_event(capabilities.smokeDetector.smoke.detected())
+    else
+      device:emit_event(capabilities.smokeDetector.smoke.clear())
+    end
+  elseif kind == "temperature-sensor" then
+    local temp = utils.safe_tonumber(value)
+    if temp ~= nil then
+      device:emit_event(capabilities.temperatureMeasurement.temperature({value = temp, unit = "C"}))
+    end
+  elseif kind == "humidity-sensor" then
+    local humidity = utils.safe_tonumber(value)
+    if humidity ~= nil then
+      device:emit_event(capabilities.relativeHumidityMeasurement.humidity({value = math.floor(humidity + 0.5)}))
+    end
+  elseif kind == "illuminance-sensor" then
+    local lux = utils.safe_tonumber(value)
+    if lux ~= nil then
+      device:emit_event(capabilities.illuminanceMeasurement.illuminance({value = math.floor(lux + 0.5), unit = "lux"}))
+    end
+  elseif kind == "water-sensor" then
+    if utils.value_is_truthy(value) then
+      device:emit_event(capabilities.waterSensor.water.wet())
+    else
+      device:emit_event(capabilities.waterSensor.water.dry())
+    end
   elseif kind == "contact" then
     local event = utils.value_is_truthy(value) and capabilities.contactSensor.contact.open() or capabilities.contactSensor.contact.closed()
     device:emit_event(event)
@@ -294,6 +339,7 @@ local function emit_child_state(device, normalized_device, kind)
     local event = utils.value_is_truthy(value) and capabilities.motionSensor.motion.active() or capabilities.motionSensor.motion.inactive()
     device:emit_event(event)
   end
+  -- "default" and "generic-sensor" kinds: no specific state emission
 end
 
 local function refresh_child_with_api(api, bridge, child, adapter, hc2_device_id, kind)
@@ -403,7 +449,27 @@ function sync.sync_bridge_inventory(driver, bridge)
   log.info_with({hub_logs = true}, string.format("[Fibaro] Received %d devices from bridge %s", #discovered, bridge.label))
   log.info_with({hub_logs = true}, string.format("[Fibaro] Device list response (first 1000 chars): %s", 
     type(payload) == "table" and tostring(payload):sub(1, 1000) or tostring(payload)))
-  
+
+  -- Fetch room names from the Fibaro controller
+  local room_names = {}
+  local rooms_api, rooms_api_err = api_for_bridge(bridge)
+  if rooms_api ~= nil then
+    local rooms_payload, rooms_err, rooms_status = rooms_api:get_rooms()
+    rooms_api:shutdown()
+    if rooms_err == nil and rooms_status == 200 and type(rooms_payload) == "table" then
+      for _, room in ipairs(rooms_payload) do
+        if room.id ~= nil and room.name ~= nil and room.name ~= "" then
+          room_names[room.id] = room.name
+        end
+      end
+      log.info_with({hub_logs = true}, string.format("[Fibaro] Loaded %d room names from bridge %s", utils.table_size(room_names), bridge.label))
+    else
+      log.info_with({hub_logs = true}, string.format("[Fibaro] Could not load rooms from bridge %s: %s", bridge.label, tostring(rooms_err or rooms_status)))
+    end
+  else
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Could not create rooms API for bridge %s: %s", bridge.label, tostring(rooms_api_err)))
+  end
+
   local children_by_key = child_devices_for_bridge(driver, bridge)
   local seen = {}
 
@@ -422,11 +488,21 @@ function sync.sync_bridge_inventory(driver, bridge)
     
     local mapped, map_err = mapper.map_device(normalized_device)
     if mapped ~= nil then
+      -- Prepend room name to label for new child devices
+      local room_id = mapped.room_id
+      if room_id ~= nil and room_id ~= 0 and room_names[room_id] ~= nil then
+        local existing_child = children_by_key[mapped.key]
+        if existing_child == nil then
+          mapped.label = string.format("[%s] %s", room_names[room_id], mapped.label)
+        end
+      end
+
       log.info_with({hub_logs = true}, string.format(
-        "[Fibaro] Device %s mapped as kind=%s, profile=%s",
+        "[Fibaro] Device %s mapped as kind=%s, profile=%s, label=%s",
         tostring(mapped.id),
         tostring(mapped.kind),
-        tostring(mapped.profile)
+        tostring(mapped.profile),
+        tostring(mapped.label)
       ))
       seen[mapped.key] = true
       ensure_child_device(driver, bridge, mapped, children_by_key[mapped.key])

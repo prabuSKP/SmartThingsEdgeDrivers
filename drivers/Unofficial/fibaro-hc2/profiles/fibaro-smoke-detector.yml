@@ -1,0 +1,10 @@
+name: fibaro-smoke-detector
+components:
+  - id: main
+    capabilities:
+      - id: smokeDetector
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: SmokeDetector
