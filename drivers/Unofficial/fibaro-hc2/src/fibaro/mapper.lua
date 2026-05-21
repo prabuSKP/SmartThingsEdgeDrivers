@@ -225,7 +225,7 @@ function mapper.map_device(device, rooms)
   -- Look up room name from rooms table and prefix label
   local room_name = ""
   if type(rooms) == "table" and room_id > 0 then
-    room_name = rooms[room_id] or ""
+    room_name = rooms[room_id] or rooms[tostring(room_id)] or ""
   end
 
   local label = raw_label

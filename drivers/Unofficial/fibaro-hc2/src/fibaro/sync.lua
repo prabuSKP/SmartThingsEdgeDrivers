@@ -495,7 +495,8 @@ function sync.sync_bridge_inventory(driver, bridge)
   if rooms_err == nil and rooms_status == 200 and type(rooms_payload) == "table" then
     for _, room in ipairs(rooms_payload) do
       if type(room) == "table" and room.id ~= nil then
-        rooms[room.id] = tostring(room.name or "")
+        local room_key = tonumber(room.id) or room.id
+        rooms[room_key] = tostring(room.name or "")
       end
     end
     log.info_with({hub_logs = true}, string.format("[Fibaro] Loaded %d rooms from bridge %s", #rooms_payload, bridge.label))
@@ -515,25 +516,6 @@ function sync.sync_bridge_inventory(driver, bridge)
   log.info_with({hub_logs = true}, string.format("[Fibaro] Device list response (first 1000 chars): %s", 
     type(payload) == "table" and tostring(payload):sub(1, 1000) or tostring(payload)))
 
-  -- Fetch room names from the Fibaro controller
-  local room_names = {}
-  local rooms_api, rooms_api_err = api_for_bridge(bridge)
-  if rooms_api ~= nil then
-    local rooms_payload, rooms_err, rooms_status = rooms_api:get_rooms()
-    rooms_api:shutdown()
-    if rooms_err == nil and rooms_status == 200 and type(rooms_payload) == "table" then
-      for _, room in ipairs(rooms_payload) do
-        if room.id ~= nil and room.name ~= nil and room.name ~= "" then
-          room_names[room.id] = room.name
-        end
-      end
-      log.info_with({hub_logs = true}, string.format("[Fibaro] Loaded %d room names from bridge %s", utils.table_size(room_names), bridge.label))
-    else
-      log.info_with({hub_logs = true}, string.format("[Fibaro] Could not load rooms from bridge %s: %s", bridge.label, tostring(rooms_err or rooms_status)))
-    end
-  else
-    log.info_with({hub_logs = true}, string.format("[Fibaro] Could not create rooms API for bridge %s: %s", bridge.label, tostring(rooms_api_err)))
-  end
 
   local children_by_key = child_devices_for_bridge(driver, bridge)
   local seen = {}
@@ -554,15 +536,6 @@ function sync.sync_bridge_inventory(driver, bridge)
     
     local mapped, map_err = mapper.map_device(normalized_device, rooms)
     if mapped ~= nil then
-      -- Prepend room name to label for new child devices
-      local room_id = mapped.room_id
-      if room_id ~= nil and room_id ~= 0 and room_names[room_id] ~= nil then
-        local existing_child = children_by_key[mapped.key]
-        if existing_child == nil then
-          mapped.label = string.format("[%s] %s", room_names[room_id], mapped.label)
-        end
-      end
-
       log.info_with({hub_logs = true}, string.format(
         "[Fibaro] Device %s mapped as kind=%s, profile=%s, label=%s",
         tostring(mapped.id),
