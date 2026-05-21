@@ -256,6 +256,8 @@ local function cache_child_metadata(driver, bridge, mapped)
     hc2_device_id = mapped.id,
     hc2_device_type = mapped.type,
     hc2_device_kind = mapped.kind,
+    hc2_room_id = mapped.room_id or 0,
+    hc2_room_name = mapped.room_name or "",
   }
 end
 
@@ -276,6 +278,19 @@ function sync.apply_pending_child_metadata(driver, device)
   device:set_field(fields.HC2_DEVICE_ID, pending.hc2_device_id, { persist = true })
   device:set_field(fields.HC2_DEVICE_TYPE, pending.hc2_device_type, { persist = true })
   device:set_field(fields.HC2_DEVICE_KIND, pending.hc2_device_kind, { persist = true })
+  device:set_field(fields.HC2_ROOM_ID, pending.hc2_room_id, { persist = true })
+  device:set_field(fields.HC2_ROOM_NAME, pending.hc2_room_name, { persist = true })
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Child device metadata applied: deviceId=%s, label=%s, hc2_device_id=%s, kind=%s, room_id=%s, room_name='%s'",
+    tostring(device.id),
+    tostring(device.label),
+    tostring(pending.hc2_device_id),
+    tostring(pending.hc2_device_kind),
+    tostring(pending.hc2_room_id),
+    tostring(pending.hc2_room_name)
+  ))
+
   driver.datastore.pending_child_data[cache_key] = nil
 end
 
@@ -364,13 +379,39 @@ local function ensure_child_device(driver, bridge, mapped, existing_child)
   end
 
   cache_child_metadata(driver, bridge, mapped)
+
+  -- Structured vendor_provided_label for script parsing:
+  -- Format: "fibaro|roomId:<id>|roomName:<name>|label:<raw_label>"
+  local raw_device_label = ""
+  if type(mapped.raw) == "table" then
+    raw_device_label = tostring(mapped.raw.label or "")
+  end
+
+  local structured_vpl = string.format(
+    "fibaro|roomId:%s|roomName:%s|label:%s",
+    tostring(mapped.room_id or 0),
+    tostring(mapped.room_name or ""),
+    raw_device_label
+  )
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Creating child device: key=%s, label='%s', kind=%s, profile=%s, roomId=%s, roomName='%s', vendor_provided_label='%s'",
+    tostring(mapped.key),
+    tostring(mapped.label),
+    tostring(mapped.kind),
+    tostring(mapped.profile),
+    tostring(mapped.room_id or 0),
+    tostring(mapped.room_name or ""),
+    tostring(structured_vpl)
+  ))
+
   local metadata = {
     type = "EDGE_CHILD",
     label = mapped.label,
     profile = mapped.profile,
     manufacturer = "Fibaro",
     model = mapped.type ~= "" and mapped.type or "fibaro-hc2-device",
-    vendor_provided_label = mapped.label,
+    vendor_provided_label = structured_vpl,
     parent_device_id = bridge.id,
     parent_assigned_child_key = mapped.key,
   }
@@ -378,6 +419,14 @@ local function ensure_child_device(driver, bridge, mapped, existing_child)
   local success, err = driver:try_create_device(metadata)
   if not success then
     log.error_with({hub_logs = true}, string.format("[Fibaro] Failed to create child %s: %s", mapped.key, tostring(err)))
+  else
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] Child device created successfully: key=%s, label='%s', roomId=%s, roomName='%s'",
+      tostring(mapped.key),
+      tostring(mapped.label),
+      tostring(mapped.room_id or 0),
+      tostring(mapped.room_name or "")
+    ))
   end
 
   return nil
@@ -433,12 +482,28 @@ function sync.sync_bridge_inventory(driver, bridge)
   log.info_with({hub_logs = true}, string.format("[Fibaro] Fetching devices from bridge %s", bridge.label))
   
   local payload, err, status = api:get_devices()
-  api:shutdown()
   if err ~= nil or status ~= 200 then
+    api:shutdown()
     log.error_with({hub_logs = true}, string.format("[Fibaro] Failed to get devices from bridge %s: %s, status: %s", bridge.label, tostring(err), tostring(status)))
     bridge:offline()
     return nil, err or ("unexpected status " .. tostring(status))
   end
+
+  -- Fetch rooms from Fibaro to build room name lookup
+  local rooms = {}
+  local rooms_payload, rooms_err, rooms_status = api:get_rooms()
+  if rooms_err == nil and rooms_status == 200 and type(rooms_payload) == "table" then
+    for _, room in ipairs(rooms_payload) do
+      if type(room) == "table" and room.id ~= nil then
+        rooms[room.id] = tostring(room.name or "")
+      end
+    end
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Loaded %d rooms from bridge %s", #rooms_payload, bridge.label))
+  else
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Could not fetch rooms from bridge %s: %s, status: %s", bridge.label, tostring(rooms_err), tostring(rooms_status)))
+  end
+
+  api:shutdown()
 
   log.info_with({hub_logs = true}, string.format("[Fibaro] Successfully fetched devices from bridge %s, processing inventory", bridge.label))
   
@@ -477,16 +542,17 @@ function sync.sync_bridge_inventory(driver, bridge)
     local normalized_device = adapter.normalize_device(raw_device)
     
     log.info_with({hub_logs = true}, string.format(
-      "[Fibaro] Normalized device: id=%s, name=%s, type=%s, value=%s, level=%s, dead=%s",
+      "[Fibaro] Normalized device: id=%s, name=%s, type=%s, value=%s, level=%s, dead=%s, roomId=%s",
       tostring(normalized_device.id),
       tostring(normalized_device.label),
       tostring(normalized_device.type),
       tostring(normalized_device.value),
       tostring(normalized_device.level),
-      tostring(normalized_device.dead)
+      tostring(normalized_device.dead),
+      tostring(normalized_device.room_id)
     ))
     
-    local mapped, map_err = mapper.map_device(normalized_device)
+    local mapped, map_err = mapper.map_device(normalized_device, rooms)
     if mapped ~= nil then
       -- Prepend room name to label for new child devices
       local room_id = mapped.room_id

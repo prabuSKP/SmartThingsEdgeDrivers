@@ -109,14 +109,15 @@ function hc2.normalize_device(raw_device)
   }
   
   log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] HC2 normalized result: id=%s, label=%s, value=%s, level=%s, dead=%s, is_plugin=%s, is_gateway=%s",
+    "[Fibaro] HC2 normalized result: id=%s, label=%s, value=%s, level=%s, dead=%s, is_plugin=%s, is_gateway=%s, room_id=%s",
     tostring(normalized.id),
     tostring(normalized.label),
     tostring(normalized.value),
     tostring(normalized.level),
     tostring(normalized.dead),
     tostring(normalized.is_plugin),
-    tostring(normalized.is_gateway)
+    tostring(normalized.is_gateway),
+    tostring(normalized.room_id)
   ))
   
   return normalized

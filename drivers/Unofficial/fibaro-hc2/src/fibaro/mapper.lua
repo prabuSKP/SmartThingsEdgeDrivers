@@ -176,7 +176,7 @@ local MAPPING_RULES = {
   },
 }
 
-function mapper.map_device(device)
+function mapper.map_device(device, rooms)
   if type(device) ~= "table" or device.id == nil then
     log.info_with({hub_logs = true}, "[Fibaro] map_device: invalid device payload")
     return nil, "invalid device payload"
@@ -218,7 +218,33 @@ function mapper.map_device(device)
   local base_type = tostring(device.base_type or "")
   local device_role = tostring(device.device_role or "")
   local interfaces = device.interfaces or {}
-  local label = device.label or ("Fibaro Device " .. tostring(device.id))
+  local parent_id = device.parent_id or 0
+  local room_id = device.room_id or 0
+  local raw_label = device.label or ("Fibaro Device " .. tostring(device.id))
+
+  -- Look up room name from rooms table and prefix label
+  local room_name = ""
+  if type(rooms) == "table" and room_id > 0 then
+    room_name = rooms[room_id] or ""
+  end
+
+  local label = raw_label
+  if room_name ~= "" then
+    -- Format: [RoomName:roomId] DeviceLabel
+    -- This encodes the Fibaro room_id in the label since SmartThings
+    -- does NOT preserve vendorProvidedLabel for EDGE_CHILD devices.
+    -- The roomId is essential for the Python room assignment script.
+    label = string.format("[%s:%s] %s", room_name, tostring(room_id), raw_label)
+  end
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Device %s: roomId=%s, roomName='%s', label='%s', rawLabel='%s'",
+    tostring(device.id),
+    tostring(room_id),
+    tostring(room_name),
+    tostring(label),
+    tostring(raw_label)
+  ))
 
   local match_context = {
     type = device_type,
@@ -252,7 +278,9 @@ function mapper.map_device(device)
         profile = rule.profile,
         label = label,
         type = device_type,
-        room_id = device.room_id,
+        parent_id = parent_id,
+        room_id = room_id,
+        room_name = room_name,
         raw = device,
       }
     end
@@ -269,7 +297,9 @@ function mapper.map_device(device)
     profile = "fibaro-default",
     label = label,
     type = device_type,
-    room_id = device.room_id,
+    parent_id = parent_id,
+    room_id = room_id,
+    room_name = room_name,
     raw = device,
   }
 end

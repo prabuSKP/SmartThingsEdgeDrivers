@@ -14,6 +14,8 @@ local fields = {
   HC2_DEVICE_ID = "hc2_device_id",
   HC2_DEVICE_TYPE = "hc2_device_type",
   HC2_DEVICE_KIND = "hc2_device_kind",
+  HC2_ROOM_ID = "hc2_room_id",
+  HC2_ROOM_NAME = "hc2_room_name",
 }
 
 return fields
