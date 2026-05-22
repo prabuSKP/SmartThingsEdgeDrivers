@@ -520,9 +520,22 @@ function sync.sync_bridge_inventory(driver, bridge)
   local children_by_key = child_devices_for_bridge(driver, bridge)
   local seen = {}
 
+  local parents_with_named_siblings = {}
+  local normalized_devices = {}
   for _, raw_device in ipairs(discovered) do
     local normalized_device = adapter.normalize_device(raw_device)
-    
+    table.insert(normalized_devices, normalized_device)
+    local parent_id = normalized_device.parent_id or 0
+    local raw_label = normalized_device.label or ""
+    if parent_id > 1 then
+      local is_unnamed = raw_label:match("^%d+%.%d+$") ~= nil or raw_label:match("^%d+%.%d+%.%d+$") ~= nil
+      if not is_unnamed then
+        parents_with_named_siblings[parent_id] = true
+      end
+    end
+  end
+
+  for _, normalized_device in ipairs(normalized_devices) do
     log.info_with({hub_logs = true}, string.format(
       "[Fibaro] Normalized device: id=%s, name=%s, type=%s, value=%s, level=%s, dead=%s, roomId=%s",
       tostring(normalized_device.id),
@@ -534,7 +547,9 @@ function sync.sync_bridge_inventory(driver, bridge)
       tostring(normalized_device.room_id)
     ))
     
-    local mapped, map_err = mapper.map_device(normalized_device, rooms)
+    local parent_id = normalized_device.parent_id or 0
+    local parent_has_named_sibling = parent_id > 1 and parents_with_named_siblings[parent_id] == true
+    local mapped, map_err = mapper.map_device(normalized_device, rooms, parent_has_named_sibling)
     if mapped ~= nil then
       log.info_with({hub_logs = true}, string.format(
         "[Fibaro] Device %s mapped as kind=%s, profile=%s, label=%s",
@@ -546,7 +561,7 @@ function sync.sync_bridge_inventory(driver, bridge)
       seen[mapped.key] = true
       ensure_child_device(driver, bridge, mapped, children_by_key[mapped.key])
     else
-      log.info_with({hub_logs = true}, string.format("[Fibaro] Skipping device %s: %s", tostring(raw_device.id), tostring(map_err)))
+      log.info_with({hub_logs = true}, string.format("[Fibaro] Skipping device %s: %s", tostring(normalized_device.id), tostring(map_err)))
     end
   end
 

@@ -287,7 +287,7 @@ local MAPPING_RULES = {
   },
 }
 
-function mapper.map_device(device, rooms)
+function mapper.map_device(device, rooms, parent_has_named_sibling)
   if type(device) ~= "table" or device.id == nil then
     log.info_with({hub_logs = true}, "[Fibaro] map_device: invalid device payload")
     return nil, "invalid device payload"
@@ -332,6 +332,27 @@ function mapper.map_device(device, rooms)
   if contains(device.type, "remoteController") then
     log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s is a remote controller, skipping", tostring(device.id)))
     return nil, "remote controller"
+  end
+
+  -- Skip Z-Wave/Zigbee parent container devices (they don't control anything)
+  if contains(device.type, "zwaveDevice") or contains(device.type, "zigbeeDevice") then
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] Device %s is a Z-Wave/Zigbee container device, skipping", tostring(device.id)))
+    return nil, "zwave/zigbee container device"
+  end
+
+  -- Skip unnamed multi-channel endpoints (e.g. "37.0", "37.2", "81.0.2")
+  -- These are Z-Wave multi-channel endpoints that duplicate named sibling devices.
+  -- Only skip if the device has a named sibling under the same parent.
+  local raw_label = device.label or ""
+  local parent_id = device.parent_id or 0
+  if parent_id > 1 and parent_has_named_sibling then
+    if raw_label:match("^%d+%.%d+$") or raw_label:match("^%d+%.%d+%.%d+$") then
+      log.info_with({hub_logs = true}, string.format(
+        "[Fibaro] Device %s ('%s') is an unnamed multi-channel endpoint (parentId=%s) with a named sibling, skipping",
+        tostring(device.id), raw_label, tostring(parent_id)))
+      return nil, "unnamed multi-channel endpoint"
+    end
   end
 
   -- Prepare normalized attributes for matching
