@@ -41,6 +41,87 @@ from typing import Optional
 SMARTTHINGS_API_BASE = "https://api.smartthings.com/v1"
 
 
+def normalize_room_name(room_name: str) -> str:
+    """
+    Normalize room name for case-insensitive comparison.
+    Converts to lowercase and strips extra whitespace.
+    """
+    return room_name.strip().lower()
+
+
+def find_matching_room(room_name: str, room_name_to_id: dict) -> tuple:
+    """
+    Find a room with case-insensitive matching.
+    
+    Returns (matched_room_name, room_id) or (None, None) if not found.
+    This helps prevent duplicate rooms like "Living room" vs "LIVING ROOM".
+    """
+    normalized_target = normalize_room_name(room_name)
+    
+    # First try exact match
+    if room_name in room_name_to_id:
+        return room_name, room_name_to_id[room_name]
+    
+    # Then try case-insensitive match
+    for existing_name, room_id in room_name_to_id.items():
+        if normalize_room_name(existing_name) == normalized_target:
+            return existing_name, room_id
+    
+    return None, None
+
+
+def extract_clean_device_label(label: str, room_name: str = None) -> tuple:
+    """
+    Extract clean device name by removing [RoomName:roomId] prefix and room name from device name.
+    
+    Returns (clean_label, room_prefix) where:
+    - clean_label: The device name without room prefix and without redundant room name
+    - room_prefix: The extracted [RoomName:roomId] prefix (or empty if not found)
+    
+    Examples:
+    - "[GBR:219] 27" → ("27", "[GBR:219]")
+    - "[LIVING ROOM:221] TV LIGHT" → ("TV LIGHT", "[LIVING ROOM:221]")
+    - "[Living Room:1] Living Room Light" → ("Light", "[Living Room:1]")
+    - "[Hallway:2] Hall Dimmer" → ("Dimmer", "[Hallway:2]")
+    - "[Hallway:2] Hall Motion Sensor" → ("Motion Sensor", "[Hallway:2]")
+    - "Simple Light" → ("Simple Light", "")
+    """
+    match = re.match(r'^\[([^\]]+)\]\s*(.+)$', label)
+    if match:
+        room_prefix = match.group(0)[:match.group(0).index(']')+1]
+        device_name = match.group(2).strip()
+        
+        # If room_name is provided, also remove room name references from the device name
+        if room_name:
+            # Create patterns to match room name variations
+            # e.g., "Living Room" matches "Living Room", "LIVING ROOM", "living room"
+            # Also handle abbreviations like "Hall" for "Hallway"
+            room_name_lower = room_name.lower()
+            device_name_lower = device_name.lower()
+            
+            # Check if device name starts with the room name (case-insensitive)
+            if device_name_lower.startswith(room_name_lower):
+                # Remove the room name prefix from device name
+                device_name = device_name[len(room_name):].strip()
+            elif device_name_lower.startswith(room_name_lower + " "):
+                # Remove the room name prefix from device name (with space)
+                device_name = device_name[len(room_name)+1:].strip()
+            else:
+                # Check for abbreviated room names (e.g., "Hall" for "Hallway")
+                # Split room name into words and check if device starts with first word
+                room_words = room_name_lower.split()
+                if room_words:
+                    first_word = room_words[0]
+                    # Check if device name starts with the first word of room name
+                    if device_name_lower.startswith(first_word + " ") or device_name_lower == first_word:
+                        device_name = device_name[len(first_word):].strip()
+                    elif device_name_lower.startswith(first_word):
+                        device_name = device_name[len(first_word):].strip()
+        
+        return device_name, room_prefix
+    return label, ""
+
+
 class SmartThingsClient:
     """Client for SmartThings REST API."""
 
@@ -133,6 +214,20 @@ class SmartThingsClient:
             "PUT",
             f"{SMARTTHINGS_API_BASE}/devices/{device_id}",
             json={"roomId": room_id}
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def update_device_label(self, device_id: str, new_label: str) -> dict:
+        """PUT /v1/devices/{deviceId} - Update device's label."""
+        if self.dry_run:
+            print(f"  [DRY RUN] Would update device {device_id} label to '{new_label}'")
+            return {"deviceId": device_id, "label": new_label}
+
+        resp = self._request(
+            "PUT",
+            f"{SMARTTHINGS_API_BASE}/devices/{device_id}",
+            json={"label": new_label}
         )
         resp.raise_for_status()
         return resp.json()
@@ -470,13 +565,18 @@ def main():
             print(f"    Room source:       NONE - no room info found in VPL or label")
 
         if room_name:
-            # Check if this room already exists in SmartThings
-            existing_st_room_id = room_name_to_id.get(room_name)
+            # Check if this room already exists in SmartThings (case-insensitive)
+            matched_room_name, existing_st_room_id = find_matching_room(room_name, room_name_to_id)
             room_exists = existing_st_room_id is not None
+            
+            # Extract clean device label (without [RoomName:roomId] prefix and room name)
+            clean_label, room_prefix = extract_clean_device_label(label, room_name)
             
             assignments.append({
                 "device_id": device_id,
                 "device_label": label,
+                "clean_label": clean_label,
+                "room_prefix": room_prefix,
                 "room_name": room_name,
                 "fibaro_room_id": fibaro_room_id,
                 "current_room_id": current_room_id,
@@ -485,17 +585,31 @@ def main():
                 "model": device.get("model", ""),
                 "vpl": vpl,
             })
-            if room_name not in room_name_to_id:
+            
+            # Use matched room name (may differ in case) or add new room
+            if room_exists:
+                # Use the existing room name (with its original case)
+                assignments[-1]["target_room_name"] = matched_room_name
+                assignments[-1]["target_room_id"] = existing_st_room_id
+            else:
+                # Need to create new room
+                assignments[-1]["target_room_name"] = room_name
+                assignments[-1]["target_room_id"] = None
                 needed_rooms.add(room_name)
             
             if room_exists:
                 is_same_room = current_room_id == existing_st_room_id
+                case_warning = " (case-insensitive match)" if matched_room_name != room_name else ""
                 print(f"    Fibaro room:       '{room_name}' (fibaro_room_id={fibaro_room_id})")
-                print(f"    ST room match:     '{room_name}' exists as roomId={existing_st_room_id}")
+                print(f"    ST room match:     '{matched_room_name}' exists as roomId={existing_st_room_id}{case_warning}")
                 print(f"    Already correct:   {is_same_room} (device roomId={current_room_id} vs target roomId={existing_st_room_id})")
+                if room_prefix:
+                    print(f"    Label cleanup:     '{label}' → '{clean_label}' (prefix removed)")
             else:
                 print(f"    Fibaro room:       '{room_name}' (fibaro_room_id={fibaro_room_id})")
                 print(f"    ST room match:     NOT FOUND - room '{room_name}' needs to be created")
+                if room_prefix:
+                    print(f"    Label cleanup:     '{label}' → '{clean_label}' (prefix will be removed)")
         else:
             devices_without_rooms += 1
             print(f"    Result:            NO ROOM INFO - skipping this device")
@@ -553,11 +667,44 @@ def main():
         if st_room_id and a["current_room_id"] != st_room_id:
             pending_assignments.append((a, st_room_id))
 
+    # Step 10: Ask if user wants to clean up labels for ALL devices with prefix
+    devices_with_prefix = [a for a in assignments if a.get("room_prefix")]
+    cleanup_labels = False
+    if devices_with_prefix:
+        print(f"\n  Found {len(devices_with_prefix)} devices with [RoomName:roomId] prefix in labels")
+        if not dry_run:
+            confirm = input("Clean up device labels (remove prefix)? (y/n) [y]: ").strip().lower()
+            cleanup_labels = confirm in ("", "y", "yes")
+
+    # If no pending assignments but user wants label cleanup, do that and exit
     if not pending_assignments:
-        print("\n✓ All Fibaro devices are already in the correct rooms. Nothing to do.")
+        if cleanup_labels:
+            # Clean up labels for all devices with prefix
+            print(f"\n--- Step 9: Cleaning labels for {len(devices_with_prefix)} devices ---")
+            label_cleanup_count = 0
+            label_fail_count = 0
+            for i, a in enumerate(devices_with_prefix):
+                if i > 0 and not dry_run:
+                    time.sleep(0.2)
+                try:
+                    if not dry_run:
+                        client.update_device_label(a["device_id"], a["clean_label"])
+                    print(f"  ✓ {a['device_label']} → {a['clean_label']}")
+                    label_cleanup_count += 1
+                except Exception as le:
+                    print(f"  ✗ {a['device_label']} → FAILED: {le}")
+                    label_fail_count += 1
+            
+            print(f"\n{'=' * 60}")
+            print(f"  Done! {label_cleanup_count} labels cleaned")
+            if label_fail_count:
+                print(f"  {label_fail_count} failed")
+            print(f"{'=' * 60}")
+        else:
+            print("\n✓ All Fibaro devices are already in the correct rooms. Nothing to do.")
         sys.exit(0)
 
-    # Step 10: Assign devices to rooms
+    # Step 11: Assign devices to rooms
     print(f"\n--- Step 8: Assigning {len(pending_assignments)} devices to rooms ---")
     for a, st_room_id in pending_assignments:
         current_room = a.get("current_room_name", "No Room")
@@ -569,9 +716,11 @@ def main():
             print("Aborted.")
             sys.exit(0)
 
-    # Execute assignments
+    # Execute assignments (room + label cleanup)
     success_count = 0
     fail_count = 0
+    label_cleanup_count = 0
+    label_fail_count = 0
 
     for i, (a, st_room_id) in enumerate(pending_assignments):
         # Add small delay to avoid rate limiting
@@ -579,9 +728,26 @@ def main():
             time.sleep(0.3)
 
         try:
+            # Update room assignment
             client.update_device_room(a["device_id"], st_room_id)
             print(f"  ✓ {a['device_label']} → {a['room_name']}")
             success_count += 1
+            
+            # Also clean up label if needed (for moved devices)
+            if cleanup_labels and a.get("room_prefix") and a.get("clean_label"):
+                if not dry_run:
+                    time.sleep(0.2)  # Extra delay for label update
+                    try:
+                        client.update_device_label(a["device_id"], a["clean_label"])
+                        print(f"    ✓ Label cleaned: '{a['device_label']}' → '{a['clean_label']}'")
+                        label_cleanup_count += 1
+                    except Exception as le:
+                        print(f"    ⚠️  Label cleanup failed: {le}")
+                        label_fail_count += 1
+                else:
+                    print(f"    [DRY RUN] Would update label: '{a['device_label']}' → '{a['clean_label']}'")
+                    label_cleanup_count += 1
+
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 429:
                 retry_after = int(e.response.headers.get("Retry-After", 10))
@@ -600,6 +766,29 @@ def main():
         except Exception as e:
             print(f"  ✗ {a['device_label']} → FAILED: {e}")
             fail_count += 1
+
+    # Step 11: Clean up labels for devices already in correct rooms
+    if cleanup_labels:
+        devices_already_correct = [a for a in assignments 
+                                    if a.get("room_prefix") and a.get("clean_label") 
+                                    and a["current_room_id"] == room_name_to_id.get(a["room_name"])]
+        
+        if devices_already_correct:
+            print(f"\n--- Step 9: Cleaning labels for {len(devices_already_correct)} devices already in correct rooms ---")
+            for a in devices_already_correct:
+                print(f"  {a['device_label']} → {a['clean_label']}")
+            
+            if not dry_run:
+                for i, a in enumerate(devices_already_correct):
+                    if i > 0:
+                        time.sleep(0.2)
+                    try:
+                        client.update_device_label(a["device_id"], a["clean_label"])
+                        print(f"  ✓ {a['device_label']} → {a['clean_label']}")
+                        label_cleanup_count += 1
+                    except Exception as le:
+                        print(f"  ✗ {a['device_label']} → FAILED: {le}")
+                        label_fail_count += 1
 
     # Summary
     print(f"\n{'=' * 60}")

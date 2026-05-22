@@ -70,6 +70,23 @@ function hc3.normalize_scene_list(payload)
   return payload
 end
 
+-- Helper function to extract endpoint IDs from raw device
+local function extract_endpoints(raw_device)
+  local endpoints = raw_device.endpoints or {}
+  local endpoint_ids = {}
+  for _, ep in ipairs(endpoints) do
+    if ep.id then
+      table.insert(endpoint_ids, tostring(ep.id))
+    end
+  end
+  return endpoint_ids
+end
+
+-- Helper function to check if device has multiple endpoints (multi-channel device)
+local function is_multi_endpoint(endpoints)
+  return type(endpoints) == "table" and #endpoints > 1
+end
+
 function hc3.normalize_device(raw_device)
   log.info_with({hub_logs = true}, string.format(
     "[Fibaro] HC3 normalize_device: id=%s, name=%s, type=%s",
@@ -92,13 +109,18 @@ function hc3.normalize_device(raw_device)
     level = props.state and 99 or 0
   end
 
+  -- Extract endpoint information for multi-channel device support
+  local endpoints = extract_endpoints(raw_device)
+  local multi_endpoint = is_multi_endpoint(endpoints)
+
   log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] HC3 device properties: value=%s, state=%s, level=%s, dead=%s, deviceRole=%s",
+    "[Fibaro] HC3 device properties: value=%s, state=%s, level=%s, dead=%s, deviceRole=%s, endpoints=%s",
     tostring(value),
     tostring(props.state),
     tostring(level),
     tostring(props.dead),
-    tostring(props.deviceRole)
+    tostring(props.deviceRole),
+    tostring(endpoints)
   ))
 
   local normalized = {
@@ -126,11 +148,13 @@ function hc3.normalize_device(raw_device)
     device_role = tostring(props.deviceRole or ""),
     device_control_type = props.deviceControlType,
     unit = props.unit,
+    endpoints = endpoints,
+    is_multi_endpoint = multi_endpoint,
     raw = raw_device,
   }
   
   log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] HC3 normalized result: id=%s, label=%s, value=%s, level=%s, dead=%s, is_plugin=%s, is_gateway=%s, room_id=%s",
+    "[Fibaro] HC3 normalized result: id=%s, label=%s, value=%s, level=%s, dead=%s, is_plugin=%s, is_gateway=%s, room_id=%s, is_multi_endpoint=%s, endpoints_count=%d",
     tostring(normalized.id),
     tostring(normalized.label),
     tostring(normalized.value),
@@ -138,7 +162,9 @@ function hc3.normalize_device(raw_device)
     tostring(normalized.dead),
     tostring(normalized.is_plugin),
     tostring(normalized.is_gateway),
-    tostring(normalized.room_id)
+    tostring(normalized.room_id),
+    tostring(normalized.is_multi_endpoint),
+    #endpoints
   ))
   
   return normalized

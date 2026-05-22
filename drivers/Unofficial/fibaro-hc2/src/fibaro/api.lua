@@ -40,7 +40,7 @@ local function process_response(response, err)
     return nil, nil, response.status
   end
 
-  log.info_with({hub_logs = true}, string.format("[Fibaro] Response body (first 500 chars): %s", body:sub(1, 500)))
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Response body: %s", body))
 
   local ok, decoded = pcall(json.decode, body)
   if ok then

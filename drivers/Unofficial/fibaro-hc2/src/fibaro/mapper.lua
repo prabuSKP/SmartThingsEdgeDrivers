@@ -30,10 +30,126 @@ local function contains(haystack, needle)
 end
 
 -- Multi-attribute mapping rules table
+-- Design Principle 1: Interfaces are checked FIRST, then type/role, then actions
 -- Checked in order; first match wins.
--- More specific rules (type+role combinations) must come BEFORE generic action-based rules.
 local MAPPING_RULES = {
-  -- 1. BLINDS / WINDOW COVERINGS
+  -- =============================================================================
+  -- GROUP 1: INTERFACE-BASED MATCHING (Highest Priority - Design Principle 1)
+  -- =============================================================================
+
+  -- 1. BLINDS / WINDOW COVERINGS (by interface)
+  {
+    match = function(d)
+      return has_interface(d.interfaces, "windowCovering")
+    end,
+    kind = "blind",
+    profile = "fibaro-blind",
+    reason = "BLIND (interface: windowCovering)"
+  },
+
+  -- 2. SMOKE DETECTOR (by interface)
+  {
+    match = function(d)
+      return has_interface(d.interfaces, "smokeDetector")
+    end,
+    kind = "smoke-detector",
+    profile = "fibaro-smoke-detector",
+    reason = "SMOKE-DETECTOR (interface: smokeDetector)"
+  },
+
+  -- 3. MOTION SENSOR (by interface)
+  {
+    match = function(d)
+      return has_interface(d.interfaces, "motionSensor")
+    end,
+    kind = "motion",
+    profile = "fibaro-motion",
+    reason = "MOTION (interface: motionSensor)"
+  },
+
+  -- 4. CONTACT SENSOR (by interface)
+  {
+    match = function(d)
+      return has_interface(d.interfaces, "contactSensor") or has_interface(d.interfaces, "doorWindowSensor")
+    end,
+    kind = "contact",
+    profile = "fibaro-contact",
+    reason = "CONTACT (interface: contactSensor/doorWindowSensor)"
+  },
+
+  -- 5. TEMPERATURE SENSOR (by interface)
+  {
+    match = function(d)
+      return has_interface(d.interfaces, "temperatureSensor")
+    end,
+    kind = "temperature-sensor",
+    profile = "fibaro-temperature-sensor",
+    reason = "TEMPERATURE-SENSOR (interface: temperatureSensor)"
+  },
+
+  -- 6. HUMIDITY SENSOR (by interface)
+  {
+    match = function(d)
+      return has_interface(d.interfaces, "humiditySensor")
+    end,
+    kind = "humidity-sensor",
+    profile = "fibaro-humidity-sensor",
+    reason = "HUMIDITY-SENSOR (interface: humiditySensor)"
+  },
+
+  -- 7. ILLUMINANCE / LIGHT SENSOR (by interface)
+  {
+    match = function(d)
+      return has_interface(d.interfaces, "lightSensor")
+    end,
+    kind = "illuminance-sensor",
+    profile = "fibaro-illuminance-sensor",
+    reason = "ILLUMINANCE-SENSOR (interface: lightSensor)"
+  },
+
+  -- 8. WATER / FLOOD SENSOR (by interface)
+  {
+    match = function(d)
+      return has_interface(d.interfaces, "waterSensor") or has_interface(d.interfaces, "floodSensor")
+    end,
+    kind = "water-sensor",
+    profile = "fibaro-water-sensor",
+    reason = "WATER-SENSOR (interface: waterSensor/floodSensor)"
+  },
+
+  -- =============================================================================
+  -- GROUP 2: MULTI-ENDPOINT DEVICES (Design Principle 3)
+  -- Multiple endpoints = Multiple components
+  -- =============================================================================
+
+  -- 9. MULTI-ENDPOINT SWITCH (double switch with 2 endpoints)
+  {
+    match = function(d)
+      return d.is_multi_endpoint == true and #d.endpoints == 3
+        and has_interface(d.interfaces, "light")
+    end,
+    kind = "double-switch",
+    profile = "fibaro-double-switch",
+    reason = "DOUBLE-SWITCH (multi-endpoint: 2 relays)"
+  },
+
+  -- 10. MULTI-ENDPOINT SWITCH (triple switch with 3 endpoints)
+  {
+    match = function(d)
+      return d.is_multi_endpoint == true and #d.endpoints == 4
+        and has_interface(d.interfaces, "light")
+    end,
+    kind = "triple-switch",
+    profile = "fibaro-triple-switch",
+    reason = "TRIPLE-SWITCH (multi-endpoint: 3 relays)"
+  },
+
+  -- =============================================================================
+  -- GROUP 3: TYPE/ROLE-BASED MATCHING (Secondary Priority)
+  -- For devices where interfaces are not available or not reliable
+  -- =============================================================================
+
+  -- 11. BLINDS / WINDOW COVERINGS (by type/role)
   {
     match = function(d)
       return contains(d.type, "rollerShutter")
@@ -41,14 +157,13 @@ local MAPPING_RULES = {
         or contains(d.base_type, "baseShutter")
         or contains(d.role, "BlindsWithPositioning")
         or contains(d.role, "Blind")
-        or has_interface(d.interfaces, "windowCovering")
     end,
     kind = "blind",
     profile = "fibaro-blind",
-    reason = "BLIND (type/role/interface match)"
+    reason = "BLIND (type/role match)"
   },
 
-  -- 2. SMOKE / HEAT DETECTOR
+  -- 12. SMOKE / HEAT DETECTOR (by type/role)
   {
     match = function(d)
       return contains(d.type, "smokeSensor")
@@ -56,27 +171,25 @@ local MAPPING_RULES = {
         or contains(d.base_type, "lifeDangerSensor")
         or contains(d.role, "Smoke")
         or contains(d.role, "HeatDetector")
-        or has_interface(d.interfaces, "smokeDetector")
     end,
     kind = "smoke-detector",
     profile = "fibaro-smoke-detector",
-    reason = "SMOKE-DETECTOR (type/role/interface match)"
+    reason = "SMOKE-DETECTOR (type/role match)"
   },
 
-  -- 3. MOTION SENSOR
+  -- 13. MOTION SENSOR (by type/role)
   {
     match = function(d)
       return contains(d.type, "motionSensor")
         or contains(d.base_type, "motionSensor")
         or contains(d.role, "Motion")
-        or has_interface(d.interfaces, "motionSensor")
     end,
     kind = "motion",
     profile = "fibaro-motion",
-    reason = "MOTION (type/role/interface match)"
+    reason = "MOTION (type/role match)"
   },
 
-  -- 4. CONTACT SENSOR (door/window)
+  -- 14. CONTACT SENSOR (by type/role)
   {
     match = function(d)
       return contains(d.type, "doorSensor")
@@ -86,86 +199,84 @@ local MAPPING_RULES = {
         or contains(d.base_type, "windowSensor")
         or contains(d.role, "Door")
         or contains(d.role, "Window")
-        or has_interface(d.interfaces, "contactSensor")
-        or has_interface(d.interfaces, "doorWindowSensor")
     end,
     kind = "contact",
     profile = "fibaro-contact",
-    reason = "CONTACT (type/role/interface match)"
+    reason = "CONTACT (type/role match)"
   },
 
-  -- 5. TEMPERATURE SENSOR
+  -- 15. TEMPERATURE SENSOR (by type/role)
   {
     match = function(d)
       return contains(d.type, "temperatureSensor")
         or contains(d.role, "Temperature")
-        or has_interface(d.interfaces, "temperatureSensor")
     end,
     kind = "temperature-sensor",
     profile = "fibaro-temperature-sensor",
-    reason = "TEMPERATURE-SENSOR (type/role/interface match)"
+    reason = "TEMPERATURE-SENSOR (type/role match)"
   },
 
-  -- 6. HUMIDITY SENSOR
+  -- 16. HUMIDITY SENSOR (by type/role)
   {
     match = function(d)
       return contains(d.type, "humiditySensor")
         or contains(d.role, "Humidity")
-        or has_interface(d.interfaces, "humiditySensor")
     end,
     kind = "humidity-sensor",
     profile = "fibaro-humidity-sensor",
-    reason = "HUMIDITY-SENSOR (type/role/interface match)"
+    reason = "HUMIDITY-SENSOR (type/role match)"
   },
 
-  -- 7. ILLUMINANCE / LIGHT SENSOR
+  -- 17. ILLUMINANCE / LIGHT SENSOR (by type/role)
   {
     match = function(d)
       return contains(d.type, "lightSensor")
         or contains(d.role, "LightSensor")
-        or has_interface(d.interfaces, "lightSensor")
     end,
     kind = "illuminance-sensor",
     profile = "fibaro-illuminance-sensor",
-    reason = "ILLUMINANCE-SENSOR (type/role/interface match)"
+    reason = "ILLUMINANCE-SENSOR (type/role match)"
   },
 
-  -- 8. WATER / FLOOD SENSOR
+  -- 18. WATER / FLOOD SENSOR (by type/role)
   {
     match = function(d)
       return contains(d.type, "floodSensor")
         or contains(d.type, "waterSensor")
         or contains(d.role, "Water")
         or contains(d.role, "Flood")
-        or has_interface(d.interfaces, "waterSensor")
-        or has_interface(d.interfaces, "floodSensor")
     end,
     kind = "water-sensor",
     profile = "fibaro-water-sensor",
-    reason = "WATER-SENSOR (type/role/interface match)"
+    reason = "WATER-SENSOR (type/role match)"
   },
 
-  -- 9. DIMMER (has setValue action - checked AFTER specific types above)
+  -- =============================================================================
+  -- GROUP 4: ACTION-BASED MATCHING (Lowest Priority - Fallback)
+  -- For devices where neither interfaces nor type provide clear classification
+  -- =============================================================================
+
+  -- 19. DIMMER (has setValue action)
   {
     match = function(d)
       return has_action(d.actions, "setValue")
     end,
     kind = "dimmer",
     profile = "fibaro-dimmer",
-    reason = "DIMMER (has setValue action)"
+    reason = "DIMMER (action: setValue)"
   },
 
-  -- 10. SWITCH (has turnOn/turnOff actions)
+  -- 20. SWITCH (has turnOn/turnOff actions)
   {
     match = function(d)
       return has_action(d.actions, "turnOn") and has_action(d.actions, "turnOff")
     end,
     kind = "switch",
     profile = "fibaro-switch",
-    reason = "SWITCH (has turnOn/turnOff actions)"
+    reason = "SWITCH (actions: turnOn/turnOff)"
   },
 
-  -- 11. GENERIC SENSOR (has value but no actionable type)
+  -- 21. GENERIC SENSOR (has value but no actionable type)
   {
     match = function(d)
       return has_value(d)
@@ -212,6 +323,17 @@ function mapper.map_device(device, rooms)
     return nil, "disabled device"
   end
 
+  -- Filter out device types that don't need user control
+  if contains(device.type, "iOS_device") then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s is a mobile device, skipping", tostring(device.id)))
+    return nil, "mobile device"
+  end
+
+  if contains(device.type, "remoteController") then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s is a remote controller, skipping", tostring(device.id)))
+    return nil, "remote controller"
+  end
+
   -- Prepare normalized attributes for matching
   local actions = device.actions or {}
   local device_type = tostring(device.type or "")
@@ -246,6 +368,10 @@ function mapper.map_device(device, rooms)
     tostring(raw_label)
   ))
 
+  -- Include endpoint information for multi-endpoint device detection
+  local endpoints = device.endpoints or {}
+  local is_multi_endpoint = device.is_multi_endpoint == true
+
   local match_context = {
     type = device_type,
     base_type = base_type,
@@ -253,6 +379,8 @@ function mapper.map_device(device, rooms)
     actions = actions,
     interfaces = interfaces,
     value = device.value,
+    endpoints = endpoints,
+    is_multi_endpoint = is_multi_endpoint,
   }
 
   log.info_with({hub_logs = true}, string.format(
