@@ -1,0 +1,33 @@
+{
+  "id": 407,
+  "name": "Galaxy Z Flip5",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "fkv84BWHRJi0-QSwYs71qx:APA91bHRYS2k60_8c6NhDh3PpLtKfdewuq77UeLU6fFL8Lx8jnlsjPDOdQSEycGywrNrQRO7Y0IE9PtOgsht4n3IqxdIbbmqWAVAuAmS436CwLdO0VZ969VO8a9cj8HNc2DwWLdfTQJs",
+    "DeviceUID": "1d5e25fb7dfbcedb",
+    "Push": true,
+    "appId": "com.fibaro.homecenter",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1714817309,
+  "modified": 1775693429,
+  "sortOrder": 277
+}

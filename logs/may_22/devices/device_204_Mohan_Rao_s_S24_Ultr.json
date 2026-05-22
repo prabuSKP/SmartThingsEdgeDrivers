@@ -1,0 +1,33 @@
+{
+  "id": 204,
+  "name": "Mohan Rao's S24 Ultr",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "caYnkRa5RU-5bynN_fr3h_:APA91bHeIrKHffkNHRvVPwSHE_f9iqKxJKxUwkbp8GZmfxZlhx-THoywfzvCExG26npQrQHP4S-Ir3TCb-JHWgE_TRMi2orlUnmUgrfVvCW5UScajsUP2ZqNkewHL382xYKLJlQURzzK",
+    "DeviceUID": "04351caf0e83c449",
+    "Push": true,
+    "appId": "com.fibaro.homecenter",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1714200642,
+  "modified": 1775693426,
+  "sortOrder": 177
+}

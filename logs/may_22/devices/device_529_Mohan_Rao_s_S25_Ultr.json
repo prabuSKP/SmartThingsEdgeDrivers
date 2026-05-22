@@ -1,0 +1,33 @@
+{
+  "id": 529,
+  "name": "Mohan Rao's S25 Ultr",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "eWmYAM6iRhGh3AFOaC56w5:APA91bG6yEzOu31KjOI4Y2Bcw0zVuu9TmBdNKa6bgXe1JHv3lJP5FS3grUzuk3ia877f5zFEBdNQsCZZWEf5YBOC2HDXbC79nGYKs2RauKQgdeLIie4k04g",
+    "DeviceUID": "a82ec05f62bca5ff",
+    "Push": true,
+    "appId": "com.fibaro.homecenter",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1739189246,
+  "modified": 1775693431,
+  "sortOrder": 338
+}

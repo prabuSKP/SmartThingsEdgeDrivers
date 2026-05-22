@@ -1,0 +1,33 @@
+{
+  "id": 553,
+  "name": "Sudheer's S25 Ultra",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "e0Ynjqp9Sbyy3SsR8mwiw-:APA91bH44wCyz5fxHH_Y4oaU5Nl6Li-hVp2h1s6CY-f7IiGyI7tWWPAuU19s2h37BM8sI5s6-Fb_-9aBTKtyhxS0BYwHX19oGAnt_fdknW44dUf1kB5svQM",
+    "DeviceUID": "8840fd30776111ed",
+    "Push": true,
+    "appId": "com.fibaro.homecenter",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1761145223,
+  "modified": 1775693432,
+  "sortOrder": 350
+}

@@ -1,0 +1,33 @@
+{
+  "id": 532,
+  "name": "Mohan Rao's Z Fold7",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "ffEwvp1iTmq-gAmUXIIlje:APA91bFbYj-wWUg33oOgiMHEyvXyGkw3fnbehX_iEOEVg8nudnic_7E0pdMBdFauhOeJGUvPDhHFGzJC9gilcAbpQ9HUeWtOJHKPjhjup9y9weqn2zXTbbo",
+    "DeviceUID": "192e2ccfc272b6e1",
+    "Push": true,
+    "appId": "com.niceforyou.yubii",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1754296589,
+  "modified": 1779382498,
+  "sortOrder": 343
+}

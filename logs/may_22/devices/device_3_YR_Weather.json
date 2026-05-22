@@ -1,0 +1,69 @@
+{
+  "id": 3,
+  "name": "YR Weather",
+  "roomID": 219,
+  "view": [
+    {
+      "type": "json"
+    }
+  ],
+  "type": "com.fibaro.yrWeather",
+  "baseType": "com.fibaro.weather",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": true,
+  "parentId": 0,
+  "viewXml": true,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "ConditionCode": 30,
+    "ConditionCodeConverted": 0,
+    "Humidity": 83.0,
+    "Pressure": 1011.6,
+    "Temperature": 23.9,
+    "WeatherCondition": "partlyCloudy",
+    "Wind": 15.12,
+    "categories": [
+      "other"
+    ],
+    "dead": false,
+    "deadReason": "",
+    "deviceControlType": 1,
+    "deviceIcon": 158,
+    "deviceRole": "Other",
+    "emailNotificationID": 0,
+    "emailNotificationType": 0,
+    "hidden": false,
+    "icon": {
+      "path": "/assets/icon/fibaro/weather/partlyCloudy.svg",
+      "source": "HC"
+    },
+    "log": "",
+    "logTemp": "",
+    "manufacturer": "",
+    "model": "",
+    "pushNotificationID": 0,
+    "pushNotificationType": 0,
+    "remoteGatewayId": 0,
+    "saveLogs": true,
+    "smsNotificationID": 0,
+    "smsNotificationType": 0,
+    "supportedDeviceRoles": [
+      "Other"
+    ],
+    "ui.config.hidden.caption": "This device is hidden in the system.",
+    "ui.config.hidden.enabled": true,
+    "ui.config.section1.caption": "Configuration",
+    "ui.config.section1.enabled": true,
+    "userDescription": "",
+    "viewType": "v2",
+    "yrSymbolCode": "partlycloudy"
+  },
+  "actions": {},
+  "hiddenActions": {},
+  "created": 1679984050,
+  "modified": 1775693417,
+  "sortOrder": 3
+}

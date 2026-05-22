@@ -1,0 +1,111 @@
+{
+  "id": 80,
+  "name": "DIMMER 2",
+  "roomID": 226,
+  "view": [
+    {
+      "assetsPath": "dynamic-plugins/com.fibaro.multilevelSwitch",
+      "name": "com.fibaro.multilevelSwitch",
+      "translatesPath": "/assets/i18n/com.fibaro.multilevelSwitch",
+      "type": "ts"
+    },
+    {
+      "assetsPath": "dynamic-plugins/favorite-positions",
+      "name": "favorite-positions",
+      "translatesPath": "/assets/i18n/favorite-positions",
+      "type": "ts"
+    },
+    {
+      "assetsPath": "",
+      "name": "level-change",
+      "translatesPath": "/assets/i18n/level-change",
+      "type": "ts"
+    }
+  ],
+  "type": "com.fibaro.multilevelSwitch",
+  "baseType": "com.fibaro.binarySwitch",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 73,
+  "viewXml": false,
+  "hasUIView": true,
+  "configXml": false,
+  "interfaces": [
+    "autoTurnOff",
+    "favoritePosition",
+    "levelChange",
+    "light",
+    "zwave",
+    "zwaveMultiChannelAssociation"
+  ],
+  "properties": {
+    "pollingTimeSec": 0,
+    "zwaveCompany": "",
+    "zwaveInfo": "3,7,13",
+    "zwaveVersion": "",
+    "autoOffDefaultTime": 900,
+    "autoOffTimestamp": 0,
+    "categories": [
+      "lights"
+    ],
+    "configured": true,
+    "dead": false,
+    "deadReason": "",
+    "deviceControlType": 2,
+    "deviceIcon": 15,
+    "deviceRole": "Light",
+    "endPointId": 6,
+    "favoritePositions": [
+      {
+        "label": "Favourite position",
+        "name": "FavoritePosition1",
+        "value": 50
+      }
+    ],
+    "favoritePositionsNativeSupport": false,
+    "icon": {
+      "path": "/assets/icon/fibaro/light/light0.png",
+      "source": "HC"
+    },
+    "isLight": true,
+    "log": "",
+    "logTemp": "",
+    "manufacturer": "",
+    "markAsDead": true,
+    "model": "",
+    "nodeId": 11,
+    "parametersTemplate": 0,
+    "productInfo": "",
+    "saveLogs": true,
+    "serialNumber": "h'f082c0fffe60e9b8",
+    "state": false,
+    "supportedDeviceRoles": [
+      "Other",
+      "GarageDoor",
+      "OuterBlind",
+      "InnerBlind",
+      "Light"
+    ],
+    "useTemplate": true,
+    "userDescription": "",
+    "value": 0
+  },
+  "actions": {
+    "configureFavoritePositions": 1,
+    "reconfigure": 0,
+    "setAutoOff": 0,
+    "setFavoritePosition": 1,
+    "setValue": 1,
+    "startLevelDecrease": 0,
+    "startLevelIncrease": 0,
+    "stopLevelChange": 0,
+    "toggle": 0,
+    "turnOff": 0,
+    "turnOn": 0
+  },
+  "hiddenActions": {},
+  "created": 1710404366,
+  "modified": 1775693421,
+  "sortOrder": 66
+}

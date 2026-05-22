@@ -1,0 +1,280 @@
+{
+  "id": 32,
+  "name": "32",
+  "roomID": 219,
+  "view": [],
+  "type": "com.fibaro.zwaveDevice",
+  "baseType": "com.fibaro.device",
+  "enabled": true,
+  "visible": false,
+  "isPlugin": false,
+  "parentId": 1,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [
+    "zwave",
+    "zwaveAssociation",
+    "zwaveConfiguration",
+    "zwaveMultiChannelAssociation",
+    "zwaveSlaveRouting"
+  ],
+  "properties": {
+    "categories": [
+      "other"
+    ],
+    "configured": true,
+    "dead": false,
+    "deadReason": "",
+    "deviceControlType": 1,
+    "deviceIcon": 28,
+    "deviceRole": "Other",
+    "deviceSpecificData": "h'00000000000464b5",
+    "deviceSpecificIdType": "Serial Number",
+    "deviceState": "Configured",
+    "endPointId": 0,
+    "icon": {},
+    "lastWorkingRoute": [
+      1
+    ],
+    "lastWorkingRouteRequestStatus": "ok",
+    "lastWorkingRouteRequestTimestamp": 0,
+    "lastWorkingRouteResponseTimestamp": 1775693455,
+    "log": "",
+    "logTemp": "",
+    "manufacturer": "",
+    "markAsDead": true,
+    "model": "",
+    "neighborList": [
+      1,
+      21,
+      27,
+      37,
+      42,
+      47,
+      52,
+      57,
+      63,
+      73,
+      81,
+      87,
+      93,
+      99,
+      178,
+      190,
+      217,
+      245,
+      252,
+      281,
+      287,
+      300,
+      340,
+      352,
+      359,
+      369,
+      375,
+      408,
+      439,
+      445,
+      452,
+      460,
+      466,
+      472
+    ],
+    "neighborListRequestStatus": "ok",
+    "neighborListRequestTimestamp": 0,
+    "neighborListResponseTimestamp": 1775693455,
+    "nodeId": 4,
+    "parameters": [
+      {
+        "id": 20,
+        "lastReportedValue": 0,
+        "lastSetValue": 0,
+        "size": 1,
+        "value": 0
+      },
+      {
+        "id": 24,
+        "lastReportedValue": 0,
+        "lastSetValue": 0,
+        "size": 1,
+        "value": 0
+      },
+      {
+        "id": 25,
+        "lastReportedValue": 0,
+        "lastSetValue": 0,
+        "size": 1,
+        "value": 0
+      },
+      {
+        "id": 30,
+        "lastReportedValue": 0,
+        "lastSetValue": 0,
+        "size": 4,
+        "value": 0
+      },
+      {
+        "id": 31,
+        "lastReportedValue": 100597760,
+        "lastSetValue": 100597760,
+        "size": 4,
+        "value": 100597760
+      },
+      {
+        "id": 32,
+        "lastReportedValue": 33488897,
+        "lastSetValue": 33488897,
+        "size": 4,
+        "value": 33488897
+      },
+      {
+        "id": 33,
+        "lastReportedValue": 50266113,
+        "lastSetValue": 50266113,
+        "size": 4,
+        "value": 50266113
+      },
+      {
+        "id": 34,
+        "lastReportedValue": 83820545,
+        "lastSetValue": 83820545,
+        "size": 4,
+        "value": 83820545
+      },
+      {
+        "id": 40,
+        "lastReportedValue": 0,
+        "lastSetValue": 0,
+        "size": 1,
+        "value": 0
+      },
+      {
+        "id": 41,
+        "lastReportedValue": 0,
+        "lastSetValue": 0,
+        "size": 1,
+        "value": 0
+      },
+      {
+        "id": 60,
+        "lastReportedValue": 0,
+        "lastSetValue": 0,
+        "size": 1,
+        "value": 0
+      },
+      {
+        "id": 61,
+        "lastReportedValue": 15,
+        "lastSetValue": 15,
+        "size": 2,
+        "value": 15
+      },
+      {
+        "id": 62,
+        "lastReportedValue": 3600,
+        "lastSetValue": 3600,
+        "size": 2,
+        "value": 3600
+      },
+      {
+        "id": 65,
+        "lastReportedValue": 10,
+        "lastSetValue": 10,
+        "size": 2,
+        "value": 10
+      },
+      {
+        "id": 66,
+        "lastReportedValue": 3600,
+        "lastSetValue": 3600,
+        "size": 2,
+        "value": 3600
+      },
+      {
+        "id": 150,
+        "lastReportedValue": 0,
+        "lastSetValue": 0,
+        "size": 1,
+        "value": 0
+      },
+      {
+        "id": 151,
+        "lastReportedValue": 1,
+        "lastSetValue": 1,
+        "size": 1,
+        "value": 1
+      },
+      {
+        "id": 152,
+        "lastReportedValue": 15000,
+        "lastSetValue": 15000,
+        "size": 4,
+        "value": 15000
+      },
+      {
+        "id": 153,
+        "lastReportedValue": 1,
+        "lastSetValue": 1,
+        "size": 1,
+        "value": 1
+      },
+      {
+        "id": 154,
+        "lastReportedValue": 100,
+        "lastSetValue": 100,
+        "size": 2,
+        "value": 100
+      },
+      {
+        "id": 155,
+        "lastReportedValue": 10,
+        "lastSetValue": 10,
+        "size": 2,
+        "value": 10
+      },
+      {
+        "id": 156,
+        "lastReportedValue": 6000,
+        "lastSetValue": 6000,
+        "size": 4,
+        "value": 6000
+      },
+      {
+        "id": 157,
+        "lastReportedValue": 6000,
+        "lastSetValue": 6000,
+        "size": 4,
+        "value": 6000
+      }
+    ],
+    "parametersTemplate": 822,
+    "pollingTimeSec": 0,
+    "productInfo": "1,15,3,3,96,0,5,1",
+    "saveLogs": true,
+    "securityLevel": "",
+    "securitySchemes": [],
+    "serialNumber": "h'00000000000464b5",
+    "supportedDeviceRoles": [
+      "Other"
+    ],
+    "useTemplate": true,
+    "userDescription": "",
+    "zwaveCompany": "Fibargroup",
+    "zwaveInfo": "3,6,2",
+    "zwaveSoftwareVersion": {},
+    "zwaveVersion": "5.1"
+  },
+  "actions": {
+    "getLastWorkingRoute": 0,
+    "getNeighborList": 0,
+    "getParameter": 1,
+    "reconfigure": 0,
+    "requestNodeNeighborUpdate": 0,
+    "setParameter": 2
+  },
+  "hiddenActions": {},
+  "created": 1710322855,
+  "modified": 1775693418,
+  "sortOrder": 17
+}

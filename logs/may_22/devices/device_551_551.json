@@ -1,0 +1,48 @@
+{
+  "id": 551,
+  "name": "551",
+  "roomID": 219,
+  "view": [],
+  "type": "com.fibaro.zigbeeDevice",
+  "baseType": "com.fibaro.device",
+  "enabled": true,
+  "visible": false,
+  "isPlugin": false,
+  "parentId": 8,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [
+    "zigbee"
+  ],
+  "properties": {
+    "categories": [
+      "other"
+    ],
+    "configured": true,
+    "dead": false,
+    "deadReason": "",
+    "deviceControlType": 1,
+    "deviceIcon": 389,
+    "deviceRole": "Other",
+    "deviceState": "Configured",
+    "icon": {},
+    "ieeeAddress": "0x90395EFFFE82E524",
+    "log": "",
+    "logTemp": "",
+    "manufacturer": "TuYa",
+    "model": "TS0502B",
+    "networkAddress": 58412,
+    "saveLogs": true,
+    "supportedDeviceRoles": [
+      "Other"
+    ],
+    "userDescription": "",
+    "zigbeeDeviceIds": "12,97"
+  },
+  "actions": {},
+  "hiddenActions": {},
+  "created": 1760979970,
+  "modified": 1775693431,
+  "sortOrder": 348
+}

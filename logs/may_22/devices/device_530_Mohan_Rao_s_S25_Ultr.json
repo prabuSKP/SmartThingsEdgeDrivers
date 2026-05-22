@@ -1,0 +1,33 @@
+{
+  "id": 530,
+  "name": "Mohan Rao's S25 Ultr",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "eUiG0EhGSrSrH7in202_Ug:APA91bGNXglrrgWMNVEDs_3ajUn-Z6vCaCvjR67uhAtZtS90L4a6FsoPSyJDQUbaDNbIqLqva3dEJfoeqVOr6FNd11p3R5F80BOOfuQ3nI5FHixx645uZ0I",
+    "DeviceUID": "b9b20f0f43884130",
+    "Push": true,
+    "appId": "com.niceforyou.yubii",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1753460576,
+  "modified": 1775693431,
+  "sortOrder": 341
+}

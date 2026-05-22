@@ -1,0 +1,99 @@
+{
+  "id": 443,
+  "name": "Water Body",
+  "roomID": 223,
+  "view": [
+    {
+      "assetsPath": "dynamic-plugins/com.fibaro.binarySwitch",
+      "name": "com.fibaro.binarySwitch",
+      "translatesPath": "/assets/i18n/com.fibaro.binarySwitch",
+      "type": "ts"
+    }
+  ],
+  "type": "com.fibaro.binarySwitch",
+  "baseType": "com.fibaro.actor",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 439,
+  "viewXml": false,
+  "hasUIView": true,
+  "configXml": false,
+  "interfaces": [
+    "autoTurnOff",
+    "light",
+    "zwave",
+    "zwaveMultiChannelAssociation"
+  ],
+  "properties": {
+    "pollingTimeSec": 0,
+    "zwaveCompany": "Hogar Controls",
+    "zwaveInfo": "3,6,4",
+    "zwaveVersion": "4.1",
+    "autoOffDefaultTime": 900,
+    "autoOffTimestamp": 0,
+    "categories": [
+      "lights"
+    ],
+    "configured": true,
+    "dead": false,
+    "deadReason": "",
+    "deviceControlType": 2,
+    "deviceIcon": 40,
+    "deviceRole": "Light",
+    "endPointId": 3,
+    "icon": {
+      "path": "/assets/icon/fibaro/zraszacz/zraszacz0.png",
+      "source": "HC"
+    },
+    "isLight": true,
+    "log": "",
+    "logTemp": "",
+    "manufacturer": "",
+    "markAsDead": true,
+    "model": "",
+    "nodeId": 54,
+    "parametersTemplate": 0,
+    "productInfo": "2,147,0,3,68,20,4,1",
+    "saveLogs": true,
+    "serialNumber": "",
+    "state": false,
+    "supportedDeviceRoles": [
+      "Light",
+      "Drencher",
+      "Pin",
+      "NightLamp",
+      "Kettle",
+      "Bracket",
+      "AirConditioner",
+      "AlarmAlarm",
+      "Coffee",
+      "GardenLamp",
+      "TvSet",
+      "CeilingFan",
+      "Toaster",
+      "Radio",
+      "RoofWindow",
+      "Other",
+      "AlarmState",
+      "AlarmArm",
+      "VideoGateBell",
+      "VideoGateOpen",
+      "Valve"
+    ],
+    "useTemplate": true,
+    "userDescription": "",
+    "value": false
+  },
+  "actions": {
+    "reconfigure": 0,
+    "setAutoOff": 0,
+    "toggle": 0,
+    "turnOff": 0,
+    "turnOn": 0
+  },
+  "hiddenActions": {},
+  "created": 1720855125,
+  "modified": 1775693429,
+  "sortOrder": 303
+}

@@ -1,0 +1,33 @@
+{
+  "id": 554,
+  "name": "Sudheer's S25 Ultra",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "eIQc-M1bTbO2AB-a-vVA3B:APA91bGO9ojc_mfPo7df3IMB_m6hj5RHTeR9dHxmQs-gkrALPw84A4tX-3vHdRdQzNn8B7ugeRUyXGCQ5sqq6f5n-FIbvOkWlg2KXfeR0FKidMun-j2siGk",
+    "DeviceUID": "5de57b1df2d1982c",
+    "Push": true,
+    "appId": "com.niceforyou.yubii",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1761145439,
+  "modified": 1775693432,
+  "sortOrder": 351
+}

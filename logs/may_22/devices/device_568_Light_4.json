@@ -1,0 +1,95 @@
+{
+  "id": 568,
+  "name": "Light 4",
+  "roomID": 220,
+  "view": [
+    {
+      "assetsPath": "dynamic-plugins/com.fibaro.multilevelSwitch",
+      "name": "com.fibaro.multilevelSwitch",
+      "translatesPath": "/assets/i18n/com.fibaro.multilevelSwitch",
+      "type": "ts"
+    },
+    {
+      "assetsPath": "dynamic-plugins/favorite-positions",
+      "name": "favorite-positions",
+      "translatesPath": "/assets/i18n/favorite-positions",
+      "type": "ts"
+    }
+  ],
+  "type": "com.fibaro.multilevelSwitch",
+  "baseType": "com.fibaro.binarySwitch",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 567,
+  "viewXml": false,
+  "hasUIView": true,
+  "configXml": false,
+  "interfaces": [
+    "autoTurnOff",
+    "colorTemperature",
+    "favoritePosition",
+    "light",
+    "zigbee"
+  ],
+  "properties": {
+    "autoOffDefaultTime": 900,
+    "autoOffTimestamp": 0,
+    "categories": [
+      "lights"
+    ],
+    "colorTemperature": 6536,
+    "configured": true,
+    "dead": false,
+    "deadReason": "",
+    "deviceControlType": 2,
+    "deviceIcon": 582,
+    "deviceRole": "Light",
+    "favoritePositions": [
+      {
+        "label": "Favourite position",
+        "name": "FavoritePosition1",
+        "value": 50
+      }
+    ],
+    "favoritePositionsNativeSupport": false,
+    "icon": {
+      "path": "/assets/icon/fibaro/LightBulbV3/LightBulbV30.svg",
+      "source": "HC"
+    },
+    "ieeeAddress": "0xB43522FFFE75CE1C",
+    "isLight": true,
+    "log": "",
+    "logTemp": "",
+    "manufacturer": "",
+    "maxColorTemperature": 6536,
+    "minColorTemperature": 2000,
+    "model": "",
+    "networkAddress": 49096,
+    "saveLogs": true,
+    "state": false,
+    "supportedDeviceRoles": [
+      "Other",
+      "GarageDoor",
+      "OuterBlind",
+      "InnerBlind",
+      "Light"
+    ],
+    "userDescription": "",
+    "value": 0
+  },
+  "actions": {
+    "configureFavoritePositions": 1,
+    "setAutoOff": 0,
+    "setColorTemperature": 1,
+    "setFavoritePosition": 1,
+    "setValue": 1,
+    "toggle": 0,
+    "turnOff": 0,
+    "turnOn": 0
+  },
+  "hiddenActions": {},
+  "created": 1767627374,
+  "modified": 1775693432,
+  "sortOrder": 365
+}

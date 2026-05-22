@@ -1,0 +1,33 @@
+{
+  "id": 571,
+  "name": "Galaxy Z Flip5",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "eN2IhbP_SHSqDvCxUt0QX_:APA91bHAXFwzd36SjGylgyqRSrOtapRYd6GhvRrjxGQgaLE7vHSupE5z7hn_7Bc4wM_7rRvN1s9f3CbJ5AAtxqcdNPUwnhnFshBsOHU6Fj5cgGaA4lnyGsM",
+    "DeviceUID": "84979fbc108edaa7",
+    "Push": true,
+    "appId": "com.niceforyou.yubii",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1768066596,
+  "modified": 1779417310,
+  "sortOrder": 368
+}

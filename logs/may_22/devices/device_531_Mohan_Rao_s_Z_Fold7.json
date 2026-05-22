@@ -1,0 +1,33 @@
+{
+  "id": 531,
+  "name": "Mohan Rao's Z Fold7",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "fJmT-TJmRsO3F-C2YiP5k4:APA91bE4WICPSE7OCmanUZIvW6FF_9hvQf6F34KJKDuVYBQp7E4yXzo63SYAmKnsQ6hd_FJm1xTinR25HkSTsu88HxwCQlpu3F60W9Yxnsj7E2sZ0TLTUks",
+    "DeviceUID": "a31dc32b1444c829",
+    "Push": true,
+    "appId": "com.fibaro.homecenter",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1754296532,
+  "modified": 1775693431,
+  "sortOrder": 342
+}

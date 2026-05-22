@@ -1,0 +1,26 @@
+{
+  "id": 7,
+  "name": "Nice Engine",
+  "roomID": 0,
+  "view": [],
+  "type": "com.fibaro.niceEngine",
+  "baseType": "",
+  "enabled": true,
+  "visible": false,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [
+    "groupActionSupport"
+  ],
+  "properties": {
+    "icon": {}
+  },
+  "actions": {},
+  "hiddenActions": {},
+  "created": 1679984050,
+  "modified": 1775693417,
+  "sortOrder": 4
+}

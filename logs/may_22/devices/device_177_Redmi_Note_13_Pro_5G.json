@@ -1,0 +1,33 @@
+{
+  "id": 177,
+  "name": "Redmi Note 13 Pro 5G",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "eu_w9ODRR7G42udTRtcjrk:APA91bFYA4fumYQZbn7Fqb82XJ0Gzxo6hqTiv92E8w16P54tYoykFJauVaz1Mu9MouEwwsXlR99yCaoHEaESpLQigpwMk68yFUOSh8XBzBiW_tRAAepkpJ7UMacatNooD2XQeszZ_j9I",
+    "DeviceUID": "f51b2e6a70797eed",
+    "Push": true,
+    "appId": "com.fibaro.homecenter",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1711012637,
+  "modified": 1775693425,
+  "sortOrder": 163
+}

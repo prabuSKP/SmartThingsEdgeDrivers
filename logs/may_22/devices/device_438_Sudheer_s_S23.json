@@ -1,0 +1,33 @@
+{
+  "id": 438,
+  "name": "Sudheer's S23",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "e3KBV2T7Siq2lEpIncG6xe:APA91bGuXu5EiGcm_ltLRUY-fJcUOkz05clLktKLRudwvwC9w4vffj54mR3ixM4b3p9Bed-QdQ8QuBUKxHii0U8EEZO2hz7qCq-HieOzy-PyvA23aBhPK7RSc8S5CgsjcZGsEldMooV6",
+    "DeviceUID": "e598dc2d6839155e",
+    "Push": true,
+    "appId": "com.fibaro.homecenter",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1719814463,
+  "modified": 1775693429,
+  "sortOrder": 298
+}

@@ -1,0 +1,33 @@
+{
+  "id": 451,
+  "name": "Nikhil's S23 Ultra",
+  "roomID": 0,
+  "view": [],
+  "type": "iOS_device",
+  "baseType": "",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 0,
+  "viewXml": false,
+  "hasUIView": false,
+  "configXml": false,
+  "interfaces": [],
+  "properties": {
+    "DeviceToken": "fCQFW2eqS4uFKydEeejNQY:APA91bGpx2KjfH1Prv-r6GPvcrthYLBkOtYsGjb1EjmAkURQCtrgT-NwbG80LLtTFsr-TlEmCJ4KzXYewdfEesrxmYflJY46iL51zibfcAOEnQIzB4ahYK2rRQCOlGcqv1VzbfTY3ldO",
+    "DeviceUID": "9b893631c554d067",
+    "Push": true,
+    "appId": "com.fibaro.homecenter",
+    "deviceIcon": 91,
+    "lastLoggedUser": 20,
+    "system": "Android"
+  },
+  "actions": {
+    "sendDefinedPushNotification": 1,
+    "sendPush": 1
+  },
+  "hiddenActions": {},
+  "created": 1722943345,
+  "modified": 1779052192,
+  "sortOrder": 311
+}

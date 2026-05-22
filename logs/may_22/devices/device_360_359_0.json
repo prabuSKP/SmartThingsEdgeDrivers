@@ -1,0 +1,122 @@
+{
+  "id": 360,
+  "name": "359.0",
+  "roomID": 219,
+  "view": [
+    {
+      "assetsPath": "dynamic-plugins/com.fibaro.binarySwitch",
+      "name": "com.fibaro.binarySwitch",
+      "translatesPath": "/assets/i18n/com.fibaro.binarySwitch",
+      "type": "ts"
+    }
+  ],
+  "type": "com.fibaro.binarySwitch",
+  "baseType": "com.fibaro.actor",
+  "enabled": true,
+  "visible": true,
+  "isPlugin": false,
+  "parentId": 359,
+  "viewXml": false,
+  "hasUIView": true,
+  "configXml": false,
+  "interfaces": [
+    "autoTurnOff",
+    "fibaroFirmwareUpdate",
+    "light",
+    "zwave",
+    "zwaveIndicator",
+    "zwaveMultiChannelAssociation"
+  ],
+  "properties": {
+    "pollingTimeSec": 0,
+    "zwaveCompany": "",
+    "zwaveInfo": "3,7,16",
+    "zwaveVersion": "",
+    "autoOffDefaultTime": 900,
+    "autoOffTimestamp": 0,
+    "categories": [
+      "lights"
+    ],
+    "configured": true,
+    "dead": false,
+    "deadReason": "",
+    "deviceControlType": 2,
+    "deviceIcon": 300,
+    "deviceRole": "Light",
+    "endPointId": 0,
+    "firmwareUpdate": {
+      "info": "",
+      "progress": 0,
+      "status": "UpToDate",
+      "updateVersion": ""
+    },
+    "icon": {
+      "path": "/assets/icon/fibaro/ButtonSwitchV2/ButtonSwitchV20.svg",
+      "source": "HC"
+    },
+    "indicatorSupportedProperties": [],
+    "indicatorValue": [
+      {
+        "id": 0,
+        "properties": {
+          "0": 0
+        }
+      }
+    ],
+    "isLight": true,
+    "log": "",
+    "logTemp": "",
+    "manufacturer": "",
+    "markAsDead": true,
+    "model": "",
+    "nodeId": 47,
+    "parametersTemplate": 0,
+    "productInfo": "",
+    "saveLogs": true,
+    "serialNumber": "h'f082c0fffe60ec52",
+    "state": false,
+    "supportedDeviceRoles": [
+      "Light",
+      "Drencher",
+      "Pin",
+      "NightLamp",
+      "Kettle",
+      "Bracket",
+      "AirConditioner",
+      "AlarmAlarm",
+      "Coffee",
+      "GardenLamp",
+      "TvSet",
+      "CeilingFan",
+      "Toaster",
+      "Radio",
+      "RoofWindow",
+      "Other",
+      "AlarmState",
+      "AlarmArm",
+      "VideoGateBell",
+      "VideoGateOpen",
+      "Valve"
+    ],
+    "updateVersion": "",
+    "useTemplate": true,
+    "userDescription": "",
+    "value": false
+  },
+  "actions": {
+    "abortUpdate": 1,
+    "reconfigure": 0,
+    "retryUpdate": 1,
+    "setAutoOff": 0,
+    "setIndicatorValue": 1,
+    "startUpdate": 1,
+    "toggle": 0,
+    "turnOff": 0,
+    "turnOn": 0,
+    "updateFirmware": 1
+  },
+  "hiddenActions": {},
+  "created": 1714470609,
+  "modified": 1775693549,
+  "sortOrder": 234
+}
