@@ -16,7 +16,7 @@ preferences:
       stringType: text
       minLength: 0
       maxLength: 5
-      default: "http"
+      default: ""
   - name: host
     title: Fibaro Host
     description: Auto-populated by mDNS discovery. Leave empty for discovered bridges. Set manually only for HC2 or to override the discovered address.

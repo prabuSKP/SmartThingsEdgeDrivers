@@ -78,14 +78,39 @@ local function get_poll_interval(device)
   return math.max(10, poll_value)
 end
 
+local function get_pref_override(pref_value)
+  if type(pref_value) == "string" then
+    local trimmed = utils.trim(pref_value)
+    if trimmed ~= "" then
+      return trimmed
+    end
+  end
+  return nil
+end
+
 local function get_bridge_endpoint_config(bridge)
   local prefs = bridge.preferences or {}
   local field_scheme = bridge:get_field(fields.BRIDGE_SCHEME)
   local field_host = bridge:get_field(fields.BRIDGE_HOST)
   local field_port = bridge:get_field(fields.BRIDGE_PORT)
-  local scheme = normalize_scheme(field_scheme or prefs.scheme)
-  local host = utils.trim(field_host or prefs.host or "")
-  local port = utils.safe_tonumber(field_port or prefs.port) or (scheme == "https" and 443 or 80)
+
+  -- Use preference override if set, otherwise auto-detected field
+  local opt_scheme = get_pref_override(prefs.scheme)
+  local scheme = normalize_scheme(opt_scheme or field_scheme)
+
+  local host = utils.trim(get_pref_override(prefs.host) or field_host or "")
+
+  -- Determine the port based on preferences and scheme
+  local opt_port = utils.safe_tonumber(get_pref_override(prefs.port))
+  local port
+  if opt_port then
+    port = opt_port
+  elseif opt_scheme and opt_scheme ~= field_scheme then
+    -- User explicitly changed the scheme, so default the port based on the new scheme
+    port = (scheme == "https" and 443 or 80)
+  else
+    port = utils.safe_tonumber(field_port) or (scheme == "https" and 443 or 80)
+  end
 
   if host == "" then
     return nil, "bridge host unavailable"
