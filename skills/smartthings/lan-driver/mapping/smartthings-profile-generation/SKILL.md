@@ -5,7 +5,7 @@ description: >
   Covers profile YAML format with components, capabilities, categories, and metadata.
   Includes multi-component profiles for dual/triple outlets, sensor-only profiles,
   actuator profiles, and composite profiles. Provides a complete catalog of all
-  Fibaro driver profiles as reference. Use when creating new device profiles for
+  vendor-prefixed driver profiles as reference. Use when creating new device profiles for
   a hub bridge Edge driver or extending an existing driver with new device types.
 ---
 
@@ -17,7 +17,7 @@ capabilities, UI components, and device category.
 ## Profile YAML Structure
 
 ```yaml
-name: my-device-profile        # Must match the profile name used in mapper.lua
+name: vendor-device-profile    # Must match the profile name used in mapper.lua
 components:
   - id: main                   # Primary component (required)
     capabilities:
@@ -36,7 +36,7 @@ components:
 ### Switch (Binary On/Off)
 
 ```yaml
-name: my-switch
+name: vendor-switch
 components:
   - id: main
     capabilities:
@@ -51,7 +51,7 @@ components:
 ### Dimmer (Variable Level)
 
 ```yaml
-name: my-dimmer
+name: vendor-dimmer
 components:
   - id: main
     capabilities:
@@ -68,7 +68,7 @@ components:
 ### Contact Sensor
 
 ```yaml
-name: my-contact
+name: vendor-contact
 components:
   - id: main
     capabilities:
@@ -83,7 +83,7 @@ components:
 ### Motion Sensor
 
 ```yaml
-name: my-motion
+name: vendor-motion
 components:
   - id: main
     capabilities:
@@ -98,7 +98,7 @@ components:
 ### Temperature Sensor
 
 ```yaml
-name: my-temperature-sensor
+name: vendor-temperature-sensor
 components:
   - id: main
     capabilities:
@@ -113,7 +113,7 @@ components:
 ### Humidity Sensor
 
 ```yaml
-name: my-humidity-sensor
+name: vendor-humidity-sensor
 components:
   - id: main
     capabilities:
@@ -128,7 +128,7 @@ components:
 ### Illuminance Sensor
 
 ```yaml
-name: my-illuminance-sensor
+name: vendor-illuminance-sensor
 components:
   - id: main
     capabilities:
@@ -143,7 +143,7 @@ components:
 ### Water / Flood Sensor
 
 ```yaml
-name: my-water-sensor
+name: vendor-water-sensor
 components:
   - id: main
     capabilities:
@@ -158,7 +158,7 @@ components:
 ### Smoke Detector
 
 ```yaml
-name: my-smoke-detector
+name: vendor-smoke-detector
 components:
   - id: main
     capabilities:
@@ -173,7 +173,7 @@ components:
 ### Blind / Window Shade
 
 ```yaml
-name: my-blind
+name: vendor-blind
 components:
   - id: main
     capabilities:
@@ -190,7 +190,7 @@ components:
 ### Generic Sensor (Catch-all)
 
 ```yaml
-name: my-generic-sensor
+name: vendor-generic-sensor
 components:
   - id: main
     capabilities:
@@ -203,7 +203,7 @@ components:
 ### Default Card (Unrecognized Devices)
 
 ```yaml
-name: my-default
+name: vendor-default
 components:
   - id: main
     capabilities:
@@ -220,7 +220,7 @@ For devices with multiple independent endpoints (e.g., dual/triple relay modules
 ### Double Switch (2 Relays)
 
 ```yaml
-name: my-double-switch
+name: vendor-double-switch
 components:
   - id: main
     capabilities:
@@ -241,7 +241,7 @@ components:
 ### Triple Switch (3 Relays)
 
 ```yaml
-name: my-triple-switch
+name: vendor-triple-switch
 components:
   - id: main
     capabilities:
@@ -272,7 +272,7 @@ For multi-sensor devices that report several measurements:
 ### Multi-Sensor (Motion + Temp + Humidity + Lux)
 
 ```yaml
-name: my-multi-sensor
+name: vendor-multi-sensor
 components:
   - id: main
     capabilities:
@@ -295,7 +295,7 @@ components:
 ## Bridge Profile
 
 ```yaml
-name: my-bridge
+name: vendor-bridge
 components:
   - id: main
     capabilities:
@@ -354,14 +354,18 @@ preferences:
       maximum: 300
 ```
 
+Only include the `Protocol` / `scheme` preference when the generated API client supports every exposed scheme. If the client only opens raw TCP HTTP sockets, omit HTTPS from the generated profile and default to HTTP internally.
+
 ## Profile Naming Conventions
 
 | Convention | Example | Usage |
 |---|---|---|
-| `{vendor}-{type}` | `fibaro-switch` | Vendor-specific profiles |
-| `{vendor}-{type}-{variant}` | `fibaro-double-switch` | Variant profiles |
-| `{vendor}-bridge` | `hc2-bridge` | Bridge/gateway profiles |
-| `{vendor}-default` | `fibaro-default` | Default fallback profile |
+| `{vendor}-{type}` | `vendor-switch` | Vendor-specific profiles |
+| `{vendor}-{type}-{variant}` | `vendor-double-switch` | Variant profiles |
+| `{vendor}-bridge` | `vendor-bridge` | Bridge/gateway profiles |
+| `{vendor}-default` | `vendor-default` | Default fallback profile |
+
+Use one naming convention throughout a generated driver. Replace `vendor` with the actual integration prefix, and do not mix `my-*`, generic names such as `switch`, and prefixed names such as `vendor-switch`.
 
 ## Adding a New Profile Checklist
 
@@ -372,6 +376,7 @@ preferences:
 5. Add command handlers in `commands.lua` if the device is controllable
 6. Register command handlers in `commands.capability_handlers` table
 7. Test with `smartthings edge:drivers:package` to validate YAML syntax
+8. Compare every Lua `profile = "..."` to every YAML `name:` and fix any mismatch before packaging
 
 ## Category Reference
 

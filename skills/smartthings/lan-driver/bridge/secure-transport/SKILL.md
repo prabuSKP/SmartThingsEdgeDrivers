@@ -17,31 +17,34 @@ This skill covers how to handle HTTPS connections and authentication methods (Ba
 ## 1. TLS/HTTPS in the Edge Runtime
 
 SmartThings Edge drivers use the `ssl` package under `cosock` for secure TCP and HTTP requests.
+Do not assume `cosock.http` is available on the hub. Prefer a packaged REST client
+that uses `cosock.socket` plus `cosock.ssl`, such as `lunchbox.rest`, or generate a
+small raw-socket HTTP client and package it with the driver.
 
 ### Basic HTTPS Request
-To perform a secure HTTP request, import `cosock.ssl` and configure your request options:
+To perform a secure HTTP request, build a TLS-capable socket and pass it to a
+packaged REST client. If this pattern is generated, include the `lunchbox` files
+in `src/lunchbox/`.
 
 ```lua
-local http = require "cosock.http"
-local ssl = require "cosock.ssl"
-local socket = require "cosock.socket"
-local log = require "log"
+local RestClient = require "lunchbox.rest"
+local utils = require "utils"
 
-local function secure_get(url)
-  local response_body = {}
-  local res, code, headers, status = http.request({
-    url = url,
-    method = "GET",
-    -- TLS options go in the request parameters if supported by the client library
-    sink = ltn12.sink.table(response_body)
-  })
-  
-  if code == 200 then
-    return table.concat(response_body)
-  else
-    return nil, string.format("Code: %s, Status: %s", tostring(code), tostring(status))
-  end
-end
+local ssl_params = {
+  mode = "client",
+  protocol = "any",
+  verify = "none",
+  options = "all",
+}
+
+local client = RestClient.new(
+  "https://192.168.1.50:443",
+  utils.labeled_socket_builder("local hub", ssl_params)
+)
+
+local response, err = client:get("/api/status", {
+  ["Accept"] = "application/json",
+})
 ```
 
 ### Self-Signed Certificate Bypass
@@ -94,7 +97,6 @@ The SmartThings SDK provides a helper module `st.base64` for encoding.
 
 ```lua
 local base64 = require "st.base64"
-local http = require "cosock.http"
 
 local function make_basic_auth_header(username, password)
   local credentials = string.format("%s:%s", username, password)
@@ -102,20 +104,10 @@ local function make_basic_auth_header(username, password)
   return "Basic " .. encoded
 end
 
--- Usage in http.request
-local function get_with_basic_auth(url, username, password)
-  local response_body = {}
-  local res, code, headers, status = http.request({
-    url = url,
-    method = "GET",
-    headers = {
-      ["Authorization"] = make_basic_auth_header(username, password),
-      ["Accept"] = "application/json"
-    },
-    sink = ltn12.sink.table(response_body)
-  })
-  return code == 200, table.concat(response_body)
-end
+local headers = {
+  ["Authorization"] = make_basic_auth_header(username, password),
+  ["Accept"] = "application/json",
+}
 ```
 
 ### B. HTTP Digest Authentication
@@ -149,16 +141,13 @@ local function calculate_digest_response(username, password, realm, nonce, metho
   return md5.hex(raw_response)
 end
 
-function perform_digest_request(url, path, method, username, password)
-  local http = require "cosock.http"
-  
-  -- 1. Initial request to get the 401 challenge
-  local response_body = {}
-  local _, code, headers, status = http.request({
-    url = url,
-    method = method,
-    sink = ltn12.sink.table(response_body)
-  })
+function perform_digest_request(rest_request, path, method, username, password)
+  -- rest_request(method, path, headers) should use the driver's packaged REST client.
+  -- 1. Initial request to get the 401 challenge.
+  local response, err = rest_request(method, path, {})
+  local code = response and response.status
+  local headers = response and response:get_headers()
+  headers = headers or {}
   
   if code ~= 401 or not headers["www-authenticate"] then
     return nil, "Failed to initiate challenge: " .. tostring(code)
@@ -184,21 +173,16 @@ function perform_digest_request(url, path, method, username, password)
     username, realm, nonce, path, qop, nc, cnonce, response
   )
   
-  -- 5. Submit final request
-  local final_body = {}
-  local _, final_code, _, final_status = http.request({
-    url = url,
-    method = method,
-    headers = {
-      ["Authorization"] = auth_header
-    },
-    sink = ltn12.sink.table(final_body)
+  -- 5. Submit final request through the same packaged REST client.
+  local final_response, final_err = rest_request(method, path, {
+    ["Authorization"] = auth_header
   })
+  local final_code = final_response and final_response.status
   
   if final_code == 200 then
-    return table.concat(final_body), nil
+    return final_response:get_body(), nil
   else
-    return nil, "Authentication failed with status: " .. tostring(final_status)
+    return nil, "Authentication failed: " .. tostring(final_err or final_code)
   end
 end
 ```

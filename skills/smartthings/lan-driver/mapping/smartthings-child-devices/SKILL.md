@@ -120,6 +120,15 @@ local function ensure_child_device(driver, bridge, mapped, existing_child)
 end
 ```
 
+> **Scale warning:** the inline create above is fine for a handful of devices, but a hub
+> with 100s of devices will exceed the SmartThings cloud creation rate limit if you call
+> `try_create_device` for all of them in one inventory pass — failed creates are dropped
+> and those devices silently never appear. For any bridge that can have many children,
+> **enqueue creates and drain them in paced batches with retry/backoff** instead. See
+> `smartthings/lan-driver/bridge/hub-event-sync` §8 (Rate-Limit-Safe Bulk Child Creation).
+> `cache_child_metadata` then runs at *drain* time (just before the actual
+> `try_create_device`), not at enqueue time.
+
 ### Metadata Fields Reference
 
 | Field | Required | Description |
@@ -281,6 +290,96 @@ if driver.datastore.pending_bridge_data == nil then
 end
 ```
 
+## Multi-Channel / Multi-Endpoint Devices
+
+A multi-gang module (dual/triple relay, multi-channel dimmer) can be represented two ways.
+**Inspect the real hub API payload before choosing** — do not assume.
+
+### Pattern 1 — Hub exposes each channel as its own device (most common)
+
+Fibaro, and most Z-Wave/Zigbee bridges, expose each physical relay as a **separate
+device** with its own `id`, `parentId`, `name`, `value`, and `actions`. A single multi-gang
+module therefore appears as **several devices plus internal/auxiliary endpoints**:
+
+```
+container  "145"      type=zwaveDevice    visible=false   <- skip (container)
+endpoint-0 "145.0"    type=binarySwitch   visible=false   <- skip (root aggregation node)
+phantom    "145.0.2"  type=heatDetector   visible=false   <- skip (phantom sub-endpoint!)
+channel    "COVE LIGHT"   type=binarySwitch  visible=true  <- KEEP (real load)
+channel    "WALL PROFILE" type=binarySwitch  visible=true  <- KEEP (real load)
+```
+
+The correct model is **one SmartThings child per *real* controllable channel**, using your
+normal single-capability profiles (`switch`, `dimmer`). The hard part is **not** creating a
+device for every endpoint — multi-channel modules emit phantom sub-endpoints (e.g. a fake
+`heatDetector` per switch) and root aggregation nodes that would become duplicate or
+nonsense cards. **Two filters, in this order:**
+
+**(1) Respect the hub's own visibility flag — this is the authoritative signal.**
+Hubs hide their internal endpoints. Skipping `visible == false` removes phantom sensor
+sub-endpoints, hidden root nodes, and secondary channels the user has hidden in one line —
+far more reliable than pattern-matching names. (Devices from APIs that omit the flag should
+normalize to `visible = true` so they are unaffected.)
+
+```lua
+if device.visible == false then
+  return nil, "hidden device"        -- phantoms, hidden roots, hidden secondaries
+end
+```
+
+**(2) Skip the endpoint-0 root even when it is left visible**, but only when the module
+genuinely has more than one controllable channel (a single-channel module's only load may
+legitimately be named `"<id>.0"`):
+
+```lua
+-- Pre-pass in sync: count controllable channels per parent
+local parent_channel_counts = {}
+for _, nd in ipairs(normalized_devices) do
+  local pid = nd.parent_id or 0
+  local controllable = (nd.actions or {}).turnOn ~= nil or (nd.actions or {}).setValue ~= nil
+  if pid > 1 and controllable then
+    parent_channel_counts[pid] = (parent_channel_counts[pid] or 0) + 1
+  end
+end
+
+-- In mapper:
+local parent_is_multichannel = parent_id > 1 and (parent_channel_counts[parent_id] or 0) > 1
+local is_numeric_endpoint = label:match("^%d+%.%d+$") or label:match("^%d+%.%d+%.%d+$")
+if parent_is_multichannel and is_numeric_endpoint and label:match("%.0$") then
+  return nil, "multi-channel root endpoint"
+end
+```
+
+> **Verify against a real device dump before trusting any name heuristic.** On one real
+> 368-device Fibaro hub, naïvely accepting every controllable/typed endpoint produced **197
+> devices including 28 phantom `heatDetector` cards and 11 duplicate root switches**;
+> applying the visibility flag + root filter reduced it to the correct **155 real loads**.
+> Do **not** decide what to surface from the device `name` pattern alone (e.g. "skip numeric
+> endpoints", or the inverse "keep every numeric endpoint") — both mis-handle real installs.
+> The hub's `visible`/hidden flag is the signal that actually matches user intent.
+
+### Pattern 2 — Hub exposes one device with multiple endpoints/components
+
+If the hub returns a *single* device carrying per-endpoint state (e.g. an `endpoints`
+array with a value each), model it as one child with a **multi-component profile**
+(`main`, `switch1`, `switch2`) and route by component:
+
+```lua
+-- Emit to a specific component
+device:emit_component_event(device.profile.components["switch2"],
+  capabilities.switch.switch.on())
+
+-- Route a command to the right endpoint
+local function handle_switch_on(driver, device, command)
+  local endpoint = component_to_endpoint(command.component)  -- "main" → 0, "switch2" → 2
+  send_action(device, endpoint, "turnOn")
+end
+```
+
+Choose Pattern 1 when the hub gives each channel its own name/room (you would lose that by
+collapsing into components). Choose Pattern 2 only when state is delivered per-endpoint
+inside one device object.
+
 ## Key Design Principles
 
 1. **Cache-before-create** — always cache metadata before `try_create_device`
@@ -289,3 +388,5 @@ end
 4. **Persist all fields** — use `{persist = true}` for hub restart recovery
 5. **Dual encoding** — encode room info in both VPL and label as safety net
 6. **Stale cleanup** — always reconcile children on full inventory sync
+7. **Pace bulk creates** — enqueue + drain with backoff for large hubs (see `hub-event-sync` §8); never fire 100s of `try_create_device` calls at once
+8. **One child per *real* channel** — filter on the hub's `visible`/hidden flag first (drops phantom sub-endpoints, hidden roots, hidden secondaries), then drop the `.0` aggregation node of multi-channel modules. Never decide what to surface from the device-name pattern alone — verify against a real device dump.

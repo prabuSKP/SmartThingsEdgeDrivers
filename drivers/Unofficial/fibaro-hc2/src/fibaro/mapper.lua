@@ -287,7 +287,7 @@ local MAPPING_RULES = {
   },
 }
 
-function mapper.map_device(device, rooms, parent_has_named_sibling)
+function mapper.map_device(device, rooms, parent_is_multichannel)
   if type(device) ~= "table" or device.id == nil then
     log.info_with({hub_logs = true}, "[Fibaro] map_device: invalid device payload")
     return nil, "invalid device payload"
@@ -323,6 +323,19 @@ function mapper.map_device(device, rooms, parent_has_named_sibling)
     return nil, "disabled device"
   end
 
+  -- Respect the hub's own visibility flag. Fibaro marks internal/auxiliary endpoints
+  -- hidden (visible=false): per-module phantom "heatDetector"/sensor sub-endpoints,
+  -- hidden Z-Wave root aggregation nodes, and secondary channels the user has hidden.
+  -- Surfacing any of these produces duplicate/unnecessary SmartThings devices, so skip
+  -- them. (HC2 devices that carry no visible flag normalize to visible=true and are
+  -- unaffected; this only filters endpoints the hub itself has chosen to hide.)
+  if device.visible == false then
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] Device %s ('%s') is hidden in Fibaro (visible=false), skipping",
+      tostring(device.id), tostring(device.label)))
+    return nil, "hidden device"
+  end
+
   -- Filter out device types that don't need user control
   if contains(device.type, "iOS_device") then
     log.info_with({hub_logs = true}, string.format("[Fibaro] Device %s is a mobile device, skipping", tostring(device.id)))
@@ -341,17 +354,23 @@ function mapper.map_device(device, rooms, parent_has_named_sibling)
     return nil, "zwave/zigbee container device"
   end
 
-  -- Skip unnamed multi-channel endpoints (e.g. "37.0", "37.2", "81.0.2")
-  -- These are Z-Wave multi-channel endpoints that duplicate named sibling devices.
-  -- Only skip if the device has a named sibling under the same parent.
+  -- A multi-channel Z-Wave/Zigbee module exposes each physical relay as its own Fibaro
+  -- device, plus an endpoint-0 aggregation node ("<parentId>.0") that drives no real
+  -- load. Most roots are already hidden (filtered by the visible=false check above), but
+  -- some installs leave the root visible alongside the real named channels. Skip that
+  -- aggregation node so it does not appear as a duplicate switch; the real per-channel
+  -- devices (user-named, or visible numeric endpoints like "217.2") are kept.
   local raw_label = device.label or ""
   local parent_id = device.parent_id or 0
-  if parent_id > 1 and parent_has_named_sibling then
-    if raw_label:match("^%d+%.%d+$") or raw_label:match("^%d+%.%d+%.%d+$") then
+  if parent_id > 1 and parent_is_multichannel then
+    local is_numeric_endpoint =
+      raw_label:match("^%d+%.%d+$") ~= nil or raw_label:match("^%d+%.%d+%.%d+$") ~= nil
+    local is_root_endpoint = is_numeric_endpoint and raw_label:match("%.0$") ~= nil
+    if is_root_endpoint then
       log.info_with({hub_logs = true}, string.format(
-        "[Fibaro] Device %s ('%s') is an unnamed multi-channel endpoint (parentId=%s) with a named sibling, skipping",
+        "[Fibaro] Device %s ('%s') is the endpoint-0 root of multi-channel parent %s, skipping",
         tostring(device.id), raw_label, tostring(parent_id)))
-      return nil, "unnamed multi-channel endpoint"
+      return nil, "multi-channel root endpoint"
     end
   end
 

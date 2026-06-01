@@ -19,9 +19,15 @@ description: >
 
 Register capabilities in `init.lua`:
 
+Important: SmartThings Edge drivers register capability handlers by passing the
+`capability_handlers` table into the `Driver(...)` constructor. Do not generate
+code that calls `driver:register_capability_handler(...)`; that method is not
+available in the Edge runtime and will crash the driver during startup.
+
 ```lua
 local capabilities = require "st.capabilities"
 local Driver = require "st.driver"
+local commands = require "handlers.commands"
 
 local driver = Driver("my-driver", {
   supported_capabilities = {
@@ -45,8 +51,32 @@ local driver = Driver("my-driver", {
 
 ## Capability Handlers Table
 
+Export the handler table from `handlers/commands.lua` and reference it from
+`init.lua`. Do not create a `commands.register_handlers(driver)` function that
+mutates the driver object after construction.
+
 ```lua
-local capability_handlers = {
+local capabilities = require "st.capabilities"
+
+local commands = {}
+
+local function handle_refresh(driver, device, command)
+  -- refresh implementation
+end
+
+local function handle_switch_on(driver, device, command)
+  -- on implementation
+end
+
+local function handle_switch_off(driver, device, command)
+  -- off implementation
+end
+
+local function handle_set_level(driver, device, command)
+  -- setLevel implementation
+end
+
+commands.capability_handlers = {
   [capabilities.refresh.ID] = {
     [capabilities.refresh.commands.refresh.NAME] = handle_refresh,
   },
@@ -65,6 +95,8 @@ local capability_handlers = {
     [capabilities.windowShadeLevel.commands.setShadeLevel.NAME] = handle_set_shade_level,
   },
 }
+
+return commands
 ```
 
 ## Capability Reference Table

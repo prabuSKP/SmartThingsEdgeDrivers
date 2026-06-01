@@ -3,6 +3,7 @@ local fields = {
   POLL_TIMER = "_poll_timer",
   CONTROLLER_KIND = "controller_kind",
   API_VERSION = "api_version",
+  POLL_COUNT = "_poll_count",
   BRIDGE_HOST = "bridge_host",
   BRIDGE_PORT = "bridge_port",
   BRIDGE_SCHEME = "bridge_scheme",

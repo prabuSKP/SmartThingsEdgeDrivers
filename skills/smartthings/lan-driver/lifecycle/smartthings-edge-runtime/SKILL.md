@@ -124,6 +124,15 @@ end)
 driver:cancel_timer(my_timer)
 ```
 
+For bridge/device-owned polling loops, prefer scheduling on `device.thread` and
+canceling on the same thread:
+
+```lua
+local timer = device.thread:call_on_schedule(30, poll_fn, "bridge poll")
+device:set_field("poll_timer", timer, { persist = false })
+device.thread:cancel_timer(timer)
+```
+
 ### Best Practices for Timers
 - **Store Timer References**: Always save timer handles in the device’s fields (`device:set_field("poll_timer", timer)`) so you can cancel them on removal or update.
 - **Wrap Callbacks in `pcall`**: If a timer callback crashes, it can crash the driver. Wrap calls in a protected call:
@@ -148,8 +157,12 @@ When building network clients (HTTP, TCP, UDP), import socket modules through `c
 
 -- DO THIS:
 local socket = require "cosock.socket"
-local http = require "cosock.http" -- if available
 ```
+
+Do not generate `require "cosock.http"` as a default HTTP client. Some hub
+runtimes do not provide that module. For REST APIs, either package a known
+compatible client such as `lunchbox.rest` with the driver or implement the
+request using `cosock.socket` / `cosock.ssl`.
 
 ### TCP Client Example
 ```lua

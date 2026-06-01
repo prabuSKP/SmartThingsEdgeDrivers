@@ -13,6 +13,23 @@ This skill contains standard, production-ready boilerplates for building SmartTh
 
 ---
 
+## 0. Mandatory Generation Rules
+
+Generated LAN bridge drivers must satisfy these rules before they are considered usable:
+
+1. Put a startup log at the very top of `src/init.lua`, immediately after `local log = require "log"` and before vendor/API imports. This makes hub logs prove whether `init.lua` started or failed during `require(...)`.
+2. Use the current Edge driver constructor key `discovery = discovery.discover` or `discovery = discovery.start`. Do not use `discovery_handler` in newly generated drivers.
+3. For manual hub setup flows, create the bridge placeholder once before entering `while should_continue()`; the loop is only for repeated network scans.
+4. Every `profile = "..."` string used in Lua must match a `name:` in one file under `profiles/*.yml`.
+5. Avoid broad SSDP terms such as `upnp:rootdevice` unless discovery validates manufacturer/model/TXT/description before creating a device.
+6. Prefer `require "st.base64"` for Basic Auth unless the target runtime is known to provide a plain `base64` module.
+7. Do not expose an `https` preference unless the generated API client actually implements TLS. If only raw TCP HTTP is implemented, generate HTTP-only preferences.
+8. Pass capability handlers into the `Driver(...)` constructor as `capability_handlers = commands.capability_handlers`. Do not generate `driver:register_capability_handler(...)`; that method is not available in the Edge runtime.
+9. Do not generate `require "cosock.http"` as the default REST client. Use packaged `lunchbox.rest` or raw `cosock.socket` / `cosock.ssl`; if `lunchbox.rest` is required, include `src/lunchbox/rest.lua` and `src/lunchbox/util.lua`.
+10. Include a final validation checklist in the generated output: package with SmartThings CLI, compare mapper profile names to profile YAML names, and confirm startup/discovery logs on the hub.
+
+---
+
 ## 1. Project Directory Structure
 
 Ensure your project folder matches this layout:
@@ -45,6 +62,9 @@ This skeleton manages the lifecycle events, registers capability commands, and b
 local capabilities = require "st.capabilities"
 local Driver = require "st.driver"
 local log = require "log"
+
+log.info_with({ hub_logs = true }, "[Driver] Loading my bridge driver init.lua")
+
 local cosock = require "cosock"
 local socket = require "cosock.socket"
 
@@ -52,6 +72,7 @@ local discovery = require "discovery"
 local fields = require "fields"
 local ApiClient = require "vendor.api"
 local mapper = require "vendor.mapper"
+local commands = require "handlers.commands"
 
 -- Log message helper
 local function device_log(device, msg, ...)
@@ -114,7 +135,7 @@ local function device_removed(driver, device)
   device_log(device, "Removed from SmartThings")
   local timer = device:get_field(fields.POLLING_TIMER)
   if timer then
-    driver:cancel_timer(timer)
+    device.thread:cancel_timer(timer)
     device:set_field(fields.POLLING_TIMER, nil)
   end
   device:set_field(fields.API_CLIENT, nil)
@@ -169,7 +190,7 @@ end
 
 -- Driver declaration
 local my_driver = Driver("my_bridge_driver", {
-  discovery_handler = discovery.handle_discovery,
+  discovery = discovery.discover,
   lifecycle_handlers = {
     added = device_added,
     init = device_init,
@@ -187,6 +208,40 @@ local my_driver = Driver("my_bridge_driver", {
 my_driver:run()
 ```
 
+For modular drivers, put the command table in `handlers/commands.lua`:
+
+```lua
+local capabilities = require "st.capabilities"
+
+local commands = {}
+
+commands.capability_handlers = {
+  [capabilities.switch.ID] = {
+    [capabilities.switch.commands.on.NAME] = commands.switch_on,
+    [capabilities.switch.commands.off.NAME] = commands.switch_off,
+  },
+  [capabilities.refresh.ID] = {
+    [capabilities.refresh.commands.refresh.NAME] = commands.refresh,
+  },
+}
+
+return commands
+```
+
+Then reference it during construction:
+
+```lua
+local commands = require "handlers.commands"
+
+local my_driver = Driver("my_bridge_driver", {
+  discovery = discovery.discover,
+  lifecycle_handlers = lifecycle.handlers,
+  capability_handlers = commands.capability_handlers,
+})
+```
+
+Do not call `driver:register_capability_handler(...)` after construction.
+
 ---
 
 ### B. Discovery Handler: `src/discovery.lua`
@@ -194,28 +249,57 @@ Handles finding the main vendor bridge via cooperative socket operations and ini
 
 ```lua
 local log = require "log"
-local cosock = require "cosock"
 local socket = require "cosock.socket"
 
 local discovery = {}
 
-function discovery.handle_discovery(driver, opts, cons)
-  log.info("Starting discovery scan...")
-  
-  -- Create Bridge device metadata
+local MANUAL_BRIDGE_DNI = "my-vendor-bridge-manual"
+
+local function bridge_exists(driver, dni)
+  for _, device in ipairs(driver:get_devices()) do
+    if device.device_network_id == dni and device.parent_device_id == nil then
+      return true
+    end
+  end
+  return false
+end
+
+function discovery.create_manual_bridge(driver)
+  if bridge_exists(driver, MANUAL_BRIDGE_DNI) then
+    log.info("[Discovery] Manual bridge already exists")
+    return
+  end
+
   local create_device_msg = {
     type = "LAN",
-    device_network_id = "my-vendor-bridge-unique-id",
-    label = "My Vendor Bridge",
-    profile = "bridge",
+    device_network_id = MANUAL_BRIDGE_DNI,
+    label = "My Vendor Bridge (configure in settings)",
+    profile = "my-vendor-bridge",
     manufacturer = "My Vendor",
     model = "SmartBridge v1",
-    vendor_provided_label = "My Vendor Bridge"
+    vendor_provided_label = MANUAL_BRIDGE_DNI
   }
-  
-  -- Trigger ST to create device
-  assert(driver:try_create_device(create_device_msg))
-  log.info("Bridge creation request submitted.")
+
+  local ok, err = driver:try_create_device(create_device_msg)
+  if ok then
+    log.info_with({ hub_logs = true }, "[Discovery] Manual bridge creation requested")
+  else
+    log.error_with({ hub_logs = true }, "[Discovery] Manual bridge creation failed: " .. tostring(err))
+  end
+end
+
+function discovery.discover(driver, opts, should_continue)
+  log.info_with({ hub_logs = true }, "[Discovery] Starting discovery")
+
+  -- Manual bridge creation is outside the loop so scan timing cannot suppress it.
+  discovery.create_manual_bridge(driver)
+
+  while should_continue() do
+    -- Add mDNS/SSDP scans here, and validate each network result before creating devices.
+    socket.sleep(5)
+  end
+
+  log.info_with({ hub_logs = true }, "[Discovery] Ending discovery")
 end
 
 return discovery
@@ -238,68 +322,89 @@ return {
 ---
 
 ### D. REST API Client: `src/vendor/api.lua`
-Cooperative HTTP REST client class utilizing `cosock`.
+Generate a cooperative HTTP REST client using packaged code and `cosock.socket`.
+Do not generate `require "cosock.http"` or `ltn12` for Edge LAN drivers unless the
+target runtime and package explicitly provide those modules. A generated driver
+that uses `lunchbox.rest` must also include `src/lunchbox/rest.lua` and
+`src/lunchbox/util.lua` in the package.
 
 ```lua
-local socket = require "cosock.socket"
-local http = require "cosock.http"
+local base64 = require "st.base64"
 local json = require "st.json"
 local log = require "log"
+
+local RestClient = require "lunchbox.rest"
+local utils = require "utils"
 
 local ApiClient = {}
 ApiClient.__index = ApiClient
 
-function ApiClient.new(ip, port)
-  local self = setmetatable({}, ApiClient)
-  self.ip = ip
-  self.port = port or 80
-  self.base_url = string.format("http://%s:%d/api", ip, self.port)
-  return self
-end
+local DEFAULT_HEADERS = {
+  ["Accept"] = "application/json",
+  ["Content-Type"] = "application/json",
+}
 
-function ApiClient:get_devices_status()
-  local url = self.base_url .. "/devices"
-  log.info("Requesting status from: " .. url)
-  
-  local response_body = {}
-  local _, code, headers, status = http.request({
-    url = url,
-    method = "GET",
-    headers = {
-      ["Accept"] = "application/json"
-    },
-    sink = ltn12.sink.table(response_body)
-  })
-
-  if code == 200 then
-    local body_str = table.concat(response_body)
-    local data, err = json.decode(body_str)
-    if not data then
-      return nil, "JSON decode error: " .. tostring(err)
-    end
-    return data, nil
-  else
-    return nil, string.format("HTTP status: %s, code: %s", tostring(status), tostring(code))
+local function copy_headers(source)
+  local headers = {}
+  for k, v in pairs(source) do
+    headers[k] = v
   end
+  return headers
 end
 
-function ApiClient:set_device_state(device_id, state)
-  local url = string.format("%s/devices/%s/control", self.base_url, device_id)
-  local request_payload = json.encode({ status = state })
-  
-  local response_body = {}
-  local _, code, headers, status = http.request({
-    url = url,
-    method = "POST",
-    headers = {
-      ["Content-Type"] = "application/json",
-      ["Content-Length"] = tostring(#request_payload)
-    },
-    source = ltn12.source.string(request_payload),
-    sink = ltn12.sink.table(response_body)
-  })
+local function build_base_url(config)
+  local scheme = config.scheme or "http"
+  local port = config.port or (scheme == "https" and 443 or 80)
+  return string.format("%s://%s:%d", scheme, config.host, port)
+end
 
-  return code == 200, status
+function ApiClient.new(config, label)
+  local headers = copy_headers(DEFAULT_HEADERS)
+  if (config.username or "") ~= "" or (config.password or "") ~= "" then
+    headers["Authorization"] =
+      "Basic " .. base64.encode((config.username or "") .. ":" .. (config.password or ""))
+  end
+
+  local ssl_params = nil
+  if config.scheme == "https" then
+    ssl_params = {
+      mode = "client",
+      protocol = "any",
+      verify = "none",
+      options = "all",
+    }
+  end
+
+  return setmetatable({
+    client = RestClient.new(build_base_url(config), utils.labeled_socket_builder(label, ssl_params)),
+    headers = headers,
+  }, ApiClient)
+end
+
+local function process_response(response, err)
+  if err ~= nil then return nil, err, nil end
+  if response == nil then return nil, "no response", nil end
+
+  local body = response:get_body() or ""
+  if body == "" then return nil, nil, response.status end
+
+  local ok, decoded = pcall(json.decode, body)
+  if ok then return decoded, nil, response.status end
+  return body, nil, response.status
+end
+
+function ApiClient:get(path)
+  log.info_with({ hub_logs = true }, "GET " .. tostring(path))
+  return process_response(self.client:get(path, self.headers))
+end
+
+function ApiClient:post(path, payload)
+  log.info_with({ hub_logs = true }, "POST " .. tostring(path))
+  return process_response(self.client:post(path, json.encode(payload or {}), self.headers))
+end
+
+function ApiClient:shutdown()
+  if self.client then self.client:shutdown() end
 end
 
 return ApiClient
@@ -311,14 +416,14 @@ return ApiClient
 Defines preferences and settings for the bridge, such as the IP Address input field in the SmartThings app.
 
 ```yaml
-name: bridge
+name: my-vendor-bridge
 components:
   - id: main
     capabilities:
       - id: refresh
-      - id: switch
+        version: 1
     categories:
-      - name: Hub
+      - name: Bridge
 preferences:
   - name: ipAddress
     title: "Bridge IP Address"
@@ -338,3 +443,18 @@ preferences:
       maximum: 65535
       default: 80
 ```
+
+The bridge profile `name:` must match the bridge creation metadata `profile` exactly. Child profile names must follow the same rule for every mapper return value.
+
+---
+
+## 3. Generated Driver Validation
+
+Before handing off a generated driver, run or document these checks:
+
+```bash
+smartthings edge:drivers:package .
+rg -n 'profile = "' src profiles
+```
+
+Then compare every Lua `profile = "..."` value to the `name:` values in `profiles/*.yml`. During hub testing, confirm the first hub log includes the top-level `[Driver] Loading ... init.lua` message and then a `[Discovery] Starting discovery` message when Add device scan runs.

@@ -13,6 +13,15 @@ description: >
 This skill combines mDNS and SSDP discovery with manual IP fallback into a complete
 hub discovery handler.
 
+## Non-Negotiable Discovery Rules
+
+1. Manual bridge fallback must be created before the `while should_continue()` loop. The loop can end quickly or fail to run in some discovery sessions, so bridge creation must not depend on it.
+2. Network scan results must be validated before `driver:try_create_device()`. Match on manufacturer, model, service name, TXT payload, serial, or fetched description/API identity.
+3. Avoid `upnp:rootdevice` as the only SSDP filter for production generation. It wakes the driver for unrelated devices. If broad SSDP is unavoidable, treat it as a candidate source only and reject non-target devices before creating anything.
+4. Cache discovered host/port/scheme/serial data before `try_create_device()`, then apply it during lifecycle init.
+5. Emit hub-visible logs for discovery start, manual bridge creation, each accepted network candidate, each rejected broad candidate, and every create failure.
+6. If automatic LAN discovery is part of the requested driver behavior, generate a real discovery provider using `st.mdns` or the selected LAN mechanism. Do not leave discovery as a placeholder loop that only sleeps.
+
 ## Discovery Architecture
 
 ```
@@ -53,6 +62,9 @@ function discovery.discover(driver, opts, should_continue)
   log.info_with({ hub_logs = true }, "[Discovery] Starting hub discovery")
 
   -- Create manual placeholder if no bridges exist yet
+  -- This must happen before the discovery loop. Do not put manual bridge
+  -- creation inside while should_continue(); otherwise Add device scans can
+  -- complete without any bridge creation attempt.
   local bridges = utils.get_bridge_devices(driver)
   if #bridges == 0 then
     discovery.create_manual_bridge(driver)
@@ -140,8 +152,26 @@ function discovery.is_target_hub(service)
   return false
 end
 
+-- If using broad SSDP/mDNS search terms, every result must pass this check
+-- before `process_mdns_result` or any `try_create_device` call.
+function discovery.validate_network_candidate(service)
+  if not discovery.is_target_hub(service) then
+    log.info(string.format(
+      "[Discovery] Rejected non-target LAN candidate: name=%s host=%s port=%s",
+      tostring(service.name), tostring(service.host), tostring(service.port)
+    ))
+    return false
+  end
+
+  return true
+end
+
 -- Process a confirmed mDNS discovery result
 function discovery.process_mdns_result(driver, service)
+  if not discovery.validate_network_candidate(service) then
+    return
+  end
+
   local txt = service.txt or {}
   local serial = txt.serialNumber or txt.serial_number or ""
 
@@ -291,6 +321,17 @@ driver:call_on_schedule(MDNS_SCAN_INTERVAL, discovery.do_mdns_scan,
   "Periodic mDNS scan")
 ```
 
+## `search-parameters.yml` Guidance
+
+Use the narrowest discovery filters available for the target hub. For Fibaro HC3-style discovery, prefer mDNS service types confirmed by packet capture or mock-server behavior. Avoid generating this as the only discovery filter:
+
+```yaml
+ssdp:
+  - searchTerm: upnp:rootdevice
+```
+
+That term matches many unrelated LAN devices. If it is included for exploration, the Lua discovery handler must validate each result by fetching/parsing the candidate identity before creating a bridge.
+
 ## DTH Migration — Carrying Over IP/Port
 
 When migrating devices from legacy Groovy Device Type Handlers (DTH) to an Edge driver,
@@ -321,4 +362,3 @@ end
 
 > **Note:** `device.data` is only populated during the `added` lifecycle event, not `init`.
 > Always persist critical fields with `{persist = true}` so they survive hub reboots.
-

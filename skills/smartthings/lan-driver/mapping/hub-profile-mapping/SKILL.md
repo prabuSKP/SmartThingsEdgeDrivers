@@ -21,6 +21,28 @@ SmartThings profile should it use?
 3. **Never skip a device silently** — use a default card fallback for unrecognized types
 4. **Role-aware mapping** — differentiate devices of same type but different roles
 5. **Multi-channel awareness** — filter duplicate Z-Wave endpoints
+6. **Profile names must exist** — every `profile` returned by `mapper.map_device()` must match a `name:` in `profiles/*.yml`
+
+## Profile Name Contract
+
+Pick one prefix per generated driver, usually the vendor or package key, and use it everywhere. Replace `vendor` in these examples with the actual integration prefix, such as `fibaro`, `hubitat`, `homeassistant`, or `openhab`.
+
+| Kind | Profile name |
+|---|---|
+| Bridge | `vendor-bridge` |
+| Switch | `vendor-switch` |
+| Dimmer | `vendor-dimmer` |
+| Blind | `vendor-blind` |
+| Contact | `vendor-contact` |
+| Motion | `vendor-motion` |
+| Temperature | `vendor-temperature-sensor` |
+| Humidity | `vendor-humidity-sensor` |
+| Illuminance | `vendor-illuminance-sensor` |
+| Water | `vendor-water-sensor` |
+| Smoke | `vendor-smoke-detector` |
+| Default | `vendor-default` |
+
+Do not mix placeholder names like `my-switch`, generic names like `switch`, and prefixed names like `vendor-switch` in the same generated driver. If the mapper returns `vendor-switch`, the generated profile must contain `name: vendor-switch`.
 
 ## 4-Group Priority System
 
@@ -76,7 +98,7 @@ local MAPPING_RULES = {
       return has_interface(d.interfaces, "windowCovering")
     end,
     kind = "blind",
-    profile = "my-blind",
+    profile = "vendor-blind",
     reason = "BLIND (interface: windowCovering)"
   },
   {
@@ -84,7 +106,7 @@ local MAPPING_RULES = {
       return has_interface(d.interfaces, "smokeDetector")
     end,
     kind = "smoke-detector",
-    profile = "my-smoke-detector",
+    profile = "vendor-smoke-detector",
     reason = "SMOKE-DETECTOR (interface: smokeDetector)"
   },
   {
@@ -92,7 +114,7 @@ local MAPPING_RULES = {
       return has_interface(d.interfaces, "motionSensor")
     end,
     kind = "motion",
-    profile = "my-motion",
+    profile = "vendor-motion",
     reason = "MOTION (interface: motionSensor)"
   },
   {
@@ -101,7 +123,7 @@ local MAPPING_RULES = {
         or has_interface(d.interfaces, "doorWindowSensor")
     end,
     kind = "contact",
-    profile = "my-contact",
+    profile = "vendor-contact",
     reason = "CONTACT (interface: contactSensor)"
   },
   {
@@ -109,7 +131,7 @@ local MAPPING_RULES = {
       return has_interface(d.interfaces, "temperatureSensor")
     end,
     kind = "temperature-sensor",
-    profile = "my-temperature-sensor",
+    profile = "vendor-temperature-sensor",
     reason = "TEMPERATURE-SENSOR (interface)"
   },
   {
@@ -117,7 +139,7 @@ local MAPPING_RULES = {
       return has_interface(d.interfaces, "humiditySensor")
     end,
     kind = "humidity-sensor",
-    profile = "my-humidity-sensor",
+    profile = "vendor-humidity-sensor",
     reason = "HUMIDITY-SENSOR (interface)"
   },
   {
@@ -125,7 +147,7 @@ local MAPPING_RULES = {
       return has_interface(d.interfaces, "lightSensor")
     end,
     kind = "illuminance-sensor",
-    profile = "my-illuminance-sensor",
+    profile = "vendor-illuminance-sensor",
     reason = "ILLUMINANCE-SENSOR (interface)"
   },
   {
@@ -134,7 +156,7 @@ local MAPPING_RULES = {
         or has_interface(d.interfaces, "floodSensor")
     end,
     kind = "water-sensor",
-    profile = "my-water-sensor",
+    profile = "vendor-water-sensor",
     reason = "WATER-SENSOR (interface)"
   },
 
@@ -148,7 +170,7 @@ local MAPPING_RULES = {
       return d.is_multi_endpoint and #d.endpoints == 3
     end,
     kind = "double-switch",
-    profile = "my-double-switch",
+    profile = "vendor-double-switch",
     reason = "DOUBLE-SWITCH (multi-endpoint: 2 relays)"
   },
 
@@ -164,7 +186,7 @@ local MAPPING_RULES = {
         or contains(d.role, "BlindsWithPositioning")
     end,
     kind = "blind",
-    profile = "my-blind",
+    profile = "vendor-blind",
     reason = "BLIND (type/role match)"
   },
   -- Add more type/role rules as needed...
@@ -178,7 +200,7 @@ local MAPPING_RULES = {
       return has_action(d.actions, "setValue")
     end,
     kind = "dimmer",
-    profile = "my-dimmer",
+    profile = "vendor-dimmer",
     reason = "DIMMER (action: setValue)"
   },
   {
@@ -187,7 +209,7 @@ local MAPPING_RULES = {
         and has_action(d.actions, "turnOff")
     end,
     kind = "switch",
-    profile = "my-switch",
+    profile = "vendor-switch",
     reason = "SWITCH (actions: turnOn/turnOff)"
   },
   {
@@ -195,7 +217,7 @@ local MAPPING_RULES = {
       return has_value(d)
     end,
     kind = "generic-sensor",
-    profile = "my-generic-sensor",
+    profile = "vendor-default",
     reason = "GENERIC-SENSOR (has value property)"
   },
 }
@@ -286,7 +308,7 @@ return {
   id = device.id,
   key = child_key_for_id(device.id),
   kind = "default",
-  profile = "my-default",
+  profile = "vendor-default",
   label = label,
   type = device_type,
   raw = device,
@@ -300,9 +322,9 @@ Each mapped device returns:
 ```lua
 {
   id = 45,                          -- Hub device ID
-  key = "fibaro-45",                -- SmartThings child key (unique per bridge)
+  key = "vendor-45",                -- SmartThings child key (unique per bridge)
   kind = "switch",                  -- Device kind for command routing
-  profile = "my-switch",            -- Profile YAML filename (sans extension)
+  profile = "vendor-switch",        -- Must match a `name:` in profiles/*.yml
   label = "[Living Room:1] Light",  -- Display label
   type = "com.fibaro.binarySwitch", -- Original hub device type
   parent_id = 0,                    -- Hub parent device ID
@@ -321,3 +343,14 @@ To add support for a new device type:
 3. **Add state emission** in `emit_child_state()` (in `hub-event-sync` skill)
 4. **Add command handlers** if the device is controllable (in `commands.lua`)
 5. **Register capability handlers** in `init.lua`
+
+## Required Mapper/Profile Self-Check
+
+Before finalizing generated code, compare mapper outputs to profile names:
+
+```bash
+rg -n 'profile = "' src/vendor/mapper.lua
+rg -n '^name:' profiles
+```
+
+Every profile name in mapper output must appear exactly once in `profiles/*.yml`. If a rule returns a profile that is not generated, either generate that profile or remove/disable the rule.

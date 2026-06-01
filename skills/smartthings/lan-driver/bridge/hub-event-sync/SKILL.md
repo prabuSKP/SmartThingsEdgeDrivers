@@ -369,21 +369,125 @@ end
 
 ## 7. Poll Scheduling
 
+`call_on_schedule` intervals are seconds, not milliseconds. Do not multiply a
+seconds preference by 1000. Store the returned timer handle and cancel it before
+rescheduling or when the bridge is removed.
+
 ```lua
+local function get_poll_interval(device)
+  local poll_value = tonumber(device.preferences and device.preferences.pollInterval) or 30
+  return math.max(10, poll_value)
+end
+
+local function cancel_bridge_timer(bridge)
+  local existing_timer = bridge:get_field(fields.POLL_TIMER)
+  if existing_timer ~= nil then
+    bridge.thread:cancel_timer(existing_timer)
+    bridge:set_field(fields.POLL_TIMER, nil, { persist = false })
+  end
+end
+
 -- In lifecycle init handler:
 local function device_init(driver, device)
   if is_bridge(device) then
-    local poll_interval = get_poll_interval(device)
-    device.thread:call_on_schedule(poll_interval, function()
+    cancel_bridge_timer(device)
+    local timer = device.thread:call_on_schedule(get_poll_interval(device), function()
       local ok, err = pcall(sync.poll_bridge, driver, device)
       if not ok then
         log.error_with({ hub_logs = true },
           "Poll crashed: " .. tostring(err))
       end
     end, device.id .. "-poll")
+    device:set_field(fields.POLL_TIMER, timer, { persist = false })
   end
 end
 ```
+
+## 8. Rate-Limit-Safe Bulk Child Creation (REQUIRED for large hubs)
+
+A hub with hundreds of devices will exceed the SmartThings cloud device-creation rate
+limit if you call `try_create_device` for every device in one pass. **Never create
+children inline inside the inventory loop.** Instead, enqueue them and drain the queue
+in paced batches across poll ticks, retrying failures with backoff. The queue lives in
+`driver.datastore` so nothing is lost across a hub reboot.
+
+```lua
+-- Tunables
+local MAX_CREATES_PER_INVENTORY = 25   -- inline budget at end of a full sync
+local MAX_CREATES_PER_POLL      = 10   -- drained each incremental poll
+local CREATE_SPACING_SECONDS    = 0.15 -- pause between create calls
+local MAX_CREATE_ATTEMPTS       = 8    -- give up after this many failures
+
+-- ensure_child_device: existing → emit state; new → ENQUEUE (do not create inline)
+local function ensure_child_device(driver, bridge, mapped, existing_child)
+  if existing_child then
+    emit_child_state(existing_child, mapped.raw, mapped.kind)
+    return existing_child
+  end
+  enqueue_child_create(driver, bridge, mapped)  -- de-dups against queue + in-flight
+  return nil
+end
+
+-- Drain paces creation and retries failures with exponential backoff.
+function sync.drain_create_queue(driver, max_count)
+  local queue = driver.datastore.pending_create_queue or {}
+  local now, processed, remaining = os.time(), 0, {}
+  for _, entry in ipairs(queue) do
+    if processed >= max_count or (entry.next_attempt_at or 0) > now then
+      table.insert(remaining, entry)                       -- budget spent / backing off
+    else
+      local bridge = find_bridge_by_dni(driver, entry.bridge_dni)
+      if not bridge then table.insert(remaining, entry)
+      elseif child_exists(driver, bridge, entry.key) then  -- created on a prior attempt
+        -- drop it
+      else
+        cache_child_metadata_entry(driver, entry)          -- so lifecycle.init can apply
+        local ok, err = driver:try_create_device(build_metadata(bridge, entry))
+        processed = processed + 1
+        if not ok then
+          entry.attempts = (entry.attempts or 0) + 1
+          entry.next_attempt_at = now + math.min(300, 5 * 2 ^ (entry.attempts - 1))
+          if entry.attempts < MAX_CREATE_ATTEMPTS then table.insert(remaining, entry) end
+        end
+        socket.sleep(CREATE_SPACING_SECONDS)
+      end
+    end
+  end
+  driver.datastore.pending_create_queue = remaining
+end
+```
+
+Call `sync.drain_create_queue(driver, MAX_CREATES_PER_INVENTORY)` at the end of a full
+sync, and `sync.drain_create_queue(driver, MAX_CREATES_PER_POLL)` at the top of every
+poll tick. Mark each device `seen` **before** enqueuing so stale-cleanup never deletes a
+device that is only waiting in the queue.
+
+## 9. Detecting Late-Added / Removed Devices
+
+Incremental `refreshStates` polling reports **property changes** in `changes`, but a hub
+reports newly paired, removed, or reconfigured devices in **`events`** (e.g.
+`DeviceCreatedEvent`). A new but idle device may never appear in `changes`. Two safeguards
+are required so late additions are not missed:
+
+```lua
+-- (a) Honor topology events in the change feed
+for _, event in ipairs(payload.events or {}) do
+  local etype = tostring(event.type or "")
+  if etype:find("DeviceCreated") or etype:find("DeviceRemoved") or etype:find("DeviceModified") then
+    should_resync_inventory = true
+  end
+end
+
+-- (b) Periodic full reconcile, independent of the change feed
+local n = (tonumber(bridge:get_field(fields.POLL_COUNT)) or 0) + 1
+bridge:set_field(fields.POLL_COUNT, n, { persist = false })
+if n % FULL_SYNC_EVERY_N_POLLS == 0 then        -- e.g. every 20 polls ≈ 10 min at 30s
+  return sync.sync_bridge_inventory(driver, bridge)
+end
+```
+
+Without these, a device added to the hub between full syncs is only picked up on the next
+driver restart or manual refresh.
 
 ## Key Design Principles
 
@@ -393,3 +497,5 @@ end
 4. **Stale cleanup** — delete child devices that no longer exist on the hub
 5. **Targeted refresh** — only refresh children that changed, not all children
 6. **Health propagation** — bridge offline → children should reflect this
+7. **Never bulk-create inline** — enqueue + drain in paced batches with backoff (§8); a large hub will otherwise trip the cloud creation rate limit and silently lose devices
+8. **Reconcile on a timer + on topology events** — incremental `changes` alone will miss idle late-added devices (§9)

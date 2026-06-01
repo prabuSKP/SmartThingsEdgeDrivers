@@ -12,6 +12,16 @@ local sync = {}
 
 local DEFAULT_POLL_INTERVAL = 30
 
+-- Child-create pacing / retry tuning. SmartThings rate-limits device creation, so a
+-- bulk discovery of a large hub must spread creates out rather than firing hundreds
+-- of try_create_device calls at once.
+local MAX_CREATES_PER_INVENTORY = 25     -- created inline at the end of a full sync
+local MAX_CREATES_PER_POLL = 10          -- drained from the queue each incremental poll
+local CREATE_SPACING_SECONDS = 0.15      -- pause between consecutive create calls
+local MAX_CREATE_ATTEMPTS = 8            -- give up on a child after this many failures
+local FULL_SYNC_EVERY_N_POLLS = 20       -- periodic full reconcile (~10 min at 30s poll)
+local INFLIGHT_TTL_SECONDS = 600         -- forget submitted-but-unmaterialized creates
+
 local function value_matches_switch(value, expected_on)
   local is_on = utils.value_is_truthy(value)
   return expected_on and is_on or (not expected_on and not is_on)
@@ -274,16 +284,77 @@ local function child_for_bridge_and_device_id(driver, bridge, device_id)
   return child_devices_for_bridge(driver, bridge)[utils.child_key_for_id(device_id)]
 end
 
-local function cache_child_metadata(driver, bridge, mapped)
+local function find_bridge_by_dni(driver, dni)
+  for _, device in ipairs(driver:get_devices()) do
+    if device.device_network_id == dni and utils.is_bridge(device) then
+      return device
+    end
+  end
+  return nil
+end
+
+local function create_queue(driver)
+  driver.datastore.pending_create_queue = driver.datastore.pending_create_queue or {}
+  return driver.datastore.pending_create_queue
+end
+
+local function inflight_creates(driver)
+  driver.datastore.inflight_creates = driver.datastore.inflight_creates or {}
+  return driver.datastore.inflight_creates
+end
+
+-- Exponential backoff (capped) for a child create that keeps failing.
+local function create_backoff_seconds(attempts)
+  local base = 5 * (2 ^ math.max(0, attempts - 1))
+  return math.min(300, base)
+end
+
+-- Cache the metadata a freshly created child needs, so lifecycle.init can apply it.
+local function cache_child_metadata_entry(driver, entry)
   driver.datastore.pending_child_data = driver.datastore.pending_child_data or {}
-  driver.datastore.pending_child_data[bridge.device_network_id .. "|" .. mapped.key] = {
-    bridge_dni = bridge.device_network_id,
-    hc2_device_id = mapped.id,
-    hc2_device_type = mapped.type,
-    hc2_device_kind = mapped.kind,
-    hc2_room_id = mapped.room_id or 0,
-    hc2_room_name = mapped.room_name or "",
+  driver.datastore.pending_child_data[entry.bridge_dni .. "|" .. entry.key] = {
+    bridge_dni = entry.bridge_dni,
+    hc2_device_id = entry.id,
+    hc2_device_type = entry.type,
+    hc2_device_kind = entry.kind,
+    hc2_room_id = entry.room_id or 0,
+    hc2_room_name = entry.room_name or "",
   }
+end
+
+-- Add a child to the create queue instead of creating it immediately. De-duplicates
+-- against entries already queued and creates already submitted to the platform.
+local function enqueue_child_create(driver, bridge, mapped)
+  local queue = create_queue(driver)
+  local qkey = bridge.device_network_id .. "|" .. mapped.key
+
+  local infl = inflight_creates(driver)
+  if infl[qkey] ~= nil and (os.time() - infl[qkey]) < INFLIGHT_TTL_SECONDS then
+    return
+  end
+  for _, existing in ipairs(queue) do
+    if existing.qkey == qkey then return end
+  end
+
+  table.insert(queue, {
+    qkey = qkey,
+    bridge_dni = bridge.device_network_id,
+    key = mapped.key,
+    kind = mapped.kind,
+    profile = mapped.profile,
+    label = mapped.label,
+    type = mapped.type,
+    id = mapped.id,
+    room_id = mapped.room_id or 0,
+    room_name = mapped.room_name or "",
+    raw_label = (type(mapped.raw) == "table") and tostring(mapped.raw.label or "") or "",
+    attempts = 0,
+    next_attempt_at = 0,
+  })
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Queued child create: key=%s label='%s' (queue size %d)",
+    tostring(mapped.key), tostring(mapped.label), #queue))
 end
 
 function sync.apply_pending_child_metadata(driver, device)
@@ -403,58 +474,90 @@ local function ensure_child_device(driver, bridge, mapped, existing_child)
     return existing_child
   end
 
-  cache_child_metadata(driver, bridge, mapped)
-
-  -- Structured vendor_provided_label for script parsing:
-  -- Format: "fibaro|roomId:<id>|roomName:<name>|label:<raw_label>"
-  local raw_device_label = ""
-  if type(mapped.raw) == "table" then
-    raw_device_label = tostring(mapped.raw.label or "")
-  end
-
-  local structured_vpl = string.format(
-    "fibaro|roomId:%s|roomName:%s|label:%s",
-    tostring(mapped.room_id or 0),
-    tostring(mapped.room_name or ""),
-    raw_device_label
-  )
-
-  log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] Creating child device: key=%s, label='%s', kind=%s, profile=%s, roomId=%s, roomName='%s', vendor_provided_label='%s'",
-    tostring(mapped.key),
-    tostring(mapped.label),
-    tostring(mapped.kind),
-    tostring(mapped.profile),
-    tostring(mapped.room_id or 0),
-    tostring(mapped.room_name or ""),
-    tostring(structured_vpl)
-  ))
-
-  local metadata = {
-    type = "EDGE_CHILD",
-    label = mapped.label,
-    profile = mapped.profile,
-    manufacturer = "Fibaro",
-    model = mapped.type ~= "" and mapped.type or "fibaro-hc2-device",
-    vendor_provided_label = structured_vpl,
-    parent_device_id = bridge.id,
-    parent_assigned_child_key = mapped.key,
-  }
-
-  local success, err = driver:try_create_device(metadata)
-  if not success then
-    log.error_with({hub_logs = true}, string.format("[Fibaro] Failed to create child %s: %s", mapped.key, tostring(err)))
-  else
-    log.info_with({hub_logs = true}, string.format(
-      "[Fibaro] Child device created successfully: key=%s, label='%s', roomId=%s, roomName='%s'",
-      tostring(mapped.key),
-      tostring(mapped.label),
-      tostring(mapped.room_id or 0),
-      tostring(mapped.room_name or "")
-    ))
-  end
-
+  -- New device: queue it for paced/retryable creation rather than creating inline.
+  -- This is what keeps a 100s-of-devices discovery from tripping the cloud rate limit.
+  enqueue_child_create(driver, bridge, mapped)
   return nil
+end
+
+-- Process up to `max_count` queued child creates, pacing them and retrying failures
+-- with backoff. Called at the end of a full sync (large budget) and on every
+-- incremental poll (small budget) so the queue always drains over time.
+function sync.drain_create_queue(driver, max_count)
+  local queue = create_queue(driver)
+  if #queue == 0 then return 0 end
+
+  max_count = max_count or MAX_CREATES_PER_POLL
+  local now = os.time()
+  local infl = inflight_creates(driver)
+  local processed = 0
+  local remaining = {}
+
+  for _, entry in ipairs(queue) do
+    if processed >= max_count or (entry.next_attempt_at or 0) > now then
+      table.insert(remaining, entry)               -- budget spent or backing off
+    else
+      local bridge = find_bridge_by_dni(driver, entry.bridge_dni)
+      if bridge == nil then
+        table.insert(remaining, entry)             -- bridge not loaded yet; retry later
+      elseif child_devices_for_bridge(driver, bridge)[entry.key] ~= nil then
+        infl[entry.qkey] = nil                     -- already created on a prior attempt
+      else
+        cache_child_metadata_entry(driver, entry)
+
+        local metadata = {
+          type = "EDGE_CHILD",
+          label = entry.label,
+          profile = entry.profile,
+          manufacturer = "Fibaro",
+          model = (entry.type ~= "" and entry.type) or "fibaro-hc2-device",
+          vendor_provided_label = string.format(
+            "fibaro|roomId:%s|roomName:%s|label:%s",
+            tostring(entry.room_id or 0), tostring(entry.room_name or ""), tostring(entry.raw_label or "")),
+          parent_device_id = bridge.id,
+          parent_assigned_child_key = entry.key,
+        }
+
+        local success, err = driver:try_create_device(metadata)
+        processed = processed + 1
+
+        if success then
+          infl[entry.qkey] = now
+          log.info_with({hub_logs = true}, string.format(
+            "[Fibaro] Child create submitted: key=%s label='%s'", tostring(entry.key), tostring(entry.label)))
+        else
+          entry.attempts = (entry.attempts or 0) + 1
+          entry.next_attempt_at = now + create_backoff_seconds(entry.attempts)
+          if entry.attempts < MAX_CREATE_ATTEMPTS then
+            table.insert(remaining, entry)
+            log.warn_with({hub_logs = true}, string.format(
+              "[Fibaro] Child create failed (attempt %d), retry in %ds: key=%s err=%s",
+              entry.attempts, entry.next_attempt_at - now, tostring(entry.key), tostring(err)))
+          else
+            log.error_with({hub_logs = true}, string.format(
+              "[Fibaro] Child create permanently failed after %d attempts: key=%s err=%s",
+              entry.attempts, tostring(entry.key), tostring(err)))
+          end
+        end
+
+        socket.sleep(CREATE_SPACING_SECONDS)
+      end
+    end
+  end
+
+  driver.datastore.pending_create_queue = remaining
+
+  -- Opportunistically prune stale in-flight markers.
+  for qkey, ts in pairs(infl) do
+    if (now - ts) > INFLIGHT_TTL_SECONDS then infl[qkey] = nil end
+  end
+
+  if processed > 0 then
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] Drained %d child create(s); %d remaining in queue", processed, #remaining))
+  end
+
+  return processed
 end
 
 local function delete_child(driver, child)
@@ -545,18 +648,21 @@ function sync.sync_bridge_inventory(driver, bridge)
   local children_by_key = child_devices_for_bridge(driver, bridge)
   local seen = {}
 
-  local parents_with_named_siblings = {}
+  -- Count controllable channels per parent so we can recognise genuinely
+  -- multi-channel Z-Wave/Zigbee modules. Fibaro exposes each physical relay as its
+  -- own device, so each controllable channel must become its own SmartThings child;
+  -- only the parent's endpoint-0 aggregation node should be filtered out (and only
+  -- when the module actually has more than one channel).
+  local parent_channel_counts = {}
   local normalized_devices = {}
   for _, raw_device in ipairs(discovered) do
     local normalized_device = adapter.normalize_device(raw_device)
     table.insert(normalized_devices, normalized_device)
     local parent_id = normalized_device.parent_id or 0
-    local raw_label = normalized_device.label or ""
-    if parent_id > 1 then
-      local is_unnamed = raw_label:match("^%d+%.%d+$") ~= nil or raw_label:match("^%d+%.%d+%.%d+$") ~= nil
-      if not is_unnamed then
-        parents_with_named_siblings[parent_id] = true
-      end
+    local actions = normalized_device.actions or {}
+    local is_controllable = actions.turnOn ~= nil or actions.setValue ~= nil
+    if parent_id > 1 and is_controllable then
+      parent_channel_counts[parent_id] = (parent_channel_counts[parent_id] or 0) + 1
     end
   end
 
@@ -573,8 +679,8 @@ function sync.sync_bridge_inventory(driver, bridge)
     ))
     
     local parent_id = normalized_device.parent_id or 0
-    local parent_has_named_sibling = parent_id > 1 and parents_with_named_siblings[parent_id] == true
-    local mapped, map_err = mapper.map_device(normalized_device, rooms, parent_has_named_sibling)
+    local parent_is_multichannel = parent_id > 1 and (parent_channel_counts[parent_id] or 0) > 1
+    local mapped, map_err = mapper.map_device(normalized_device, rooms, parent_is_multichannel)
     if mapped ~= nil then
       log.info_with({hub_logs = true}, string.format(
         "[Fibaro] Device %s mapped as kind=%s, profile=%s, label=%s",
@@ -597,6 +703,10 @@ function sync.sync_bridge_inventory(driver, bridge)
     end
   end
 
+  -- Create a first paced batch now; the rest drain across subsequent poll ticks so a
+  -- large hub never floods the SmartThings device-creation rate limit in one burst.
+  sync.drain_create_queue(driver, MAX_CREATES_PER_INVENTORY)
+
   if bridge:get_field(fields.LAST_REFRESH_STATES) == nil then
     local prime_api, prime_err = api_for_bridge(bridge)
     if prime_api ~= nil then
@@ -612,7 +722,10 @@ end
 
 function sync.poll_bridge(driver, bridge)
   log.info_with({hub_logs = true}, string.format("[Fibaro] poll_bridge called for %s", bridge.label))
-  
+
+  -- Keep draining any queued/failed child creates regardless of poll outcome.
+  sync.drain_create_queue(driver, MAX_CREATES_PER_POLL)
+
   local has_config, config_err = bridge_has_inventory_config(bridge)
   if not has_config then
     log.info_with({hub_logs = true}, string.format(
@@ -621,6 +734,17 @@ function sync.poll_bridge(driver, bridge)
     ))
     bridge:offline()
     return nil, config_err
+  end
+
+  -- Periodic full reconcile catches devices added/removed on the hub that never emit
+  -- an incremental change (e.g. a freshly paired but idle sensor), and re-queues any
+  -- children that previously failed to create.
+  local poll_count = (utils.safe_tonumber(bridge:get_field(fields.POLL_COUNT)) or 0) + 1
+  bridge:set_field(fields.POLL_COUNT, poll_count, { persist = false })
+  if poll_count % FULL_SYNC_EVERY_N_POLLS == 0 then
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] Periodic full reconcile (poll #%d) for %s", poll_count, bridge.label))
+    return sync.sync_bridge_inventory(driver, bridge)
   end
 
   local last = bridge:get_field(fields.LAST_REFRESH_STATES)
@@ -692,6 +816,18 @@ function sync.poll_bridge(driver, bridge)
     end
 
     ::continue::
+  end
+
+  -- Fibaro reports newly paired / removed / reconfigured devices as events (not as
+  -- property changes), so scan them to trigger a reconcile when the topology shifts.
+  local events = payload.events or {}
+  for _, event in ipairs(events) do
+    local etype = tostring((type(event) == "table" and event.type) or "")
+    if etype:find("DeviceCreated") or etype:find("DeviceRemoved") or etype:find("DeviceModified") then
+      log.info_with({hub_logs = true}, string.format(
+        "[Fibaro] refreshStates event '%s' -> scheduling full inventory reconcile", etype))
+      should_resync_inventory = true
+    end
   end
 
   for device_id, child in pairs(touched) do

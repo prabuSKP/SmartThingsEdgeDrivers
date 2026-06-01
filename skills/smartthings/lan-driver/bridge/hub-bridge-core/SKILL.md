@@ -193,6 +193,12 @@ end
 
 ## API Client Construction
 
+Do not assume `cosock.http` exists in the target hub runtime. For REST APIs,
+prefer a packaged client that uses `cosock.socket` / `cosock.ssl`. If generated
+code requires `lunchbox.rest`, the driver package must include
+`src/lunchbox/rest.lua` and `src/lunchbox/util.lua`; otherwise the driver will
+crash during `require`.
+
 ```lua
 local base64 = require "st.base64"
 local json = require "st.json"

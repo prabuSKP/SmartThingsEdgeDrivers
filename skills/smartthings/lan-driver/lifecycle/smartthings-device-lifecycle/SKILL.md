@@ -18,7 +18,7 @@ SmartThings Edge drivers register lifecycle handlers during instantiation:
 
 ```lua
 local my_driver = Driver("my_driver", {
-  discovery_handler = discovery.handle_discovery,
+  discovery = discovery.discover,
   lifecycle_handlers = {
     added = lifecycle.device_added,
     init = lifecycle.device_init,
@@ -157,7 +157,7 @@ local function device_info_changed(driver, device, event, args)
     -- 1. Cancel existing polling timer
     local old_timer = device:get_field("polling_timer")
     if old_timer then
-      driver:cancel_timer(old_timer)
+      device.thread:cancel_timer(old_timer)
       device:set_field("polling_timer", nil)
     end
     
@@ -166,7 +166,7 @@ local function device_info_changed(driver, device, event, args)
     device:set_field("api_client", client)
     
     -- 3. Restart polling timer
-    local timer = driver:call_on_schedule(30, function()
+    local timer = device.thread:call_on_schedule(30, function()
       pcall(client.poll_device_states, client, driver, device)
     end)
     device:set_field("polling_timer", timer)
@@ -186,7 +186,7 @@ local function device_removed(driver, device)
   -- 1. Cancel timers
   local timer = device:get_field("polling_timer")
   if timer then
-    driver:cancel_timer(timer)
+    device.thread:cancel_timer(timer)
     device:set_field("polling_timer", nil)
   end
   
