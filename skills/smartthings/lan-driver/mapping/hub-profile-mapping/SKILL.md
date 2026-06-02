@@ -18,10 +18,57 @@ SmartThings profile should it use?
 
 1. **Use ALL available attributes** — `type`, `baseType`, `deviceRole`, `actions`, `interfaces`, `properties`
 2. **Most specific match wins** — check interfaces first, then type/role, then actions
-3. **Never skip a device silently** — use a default card fallback for unrecognized types
+3. **Scope-aware fallback** — in a *full* integration, never skip a device silently (use a default card for unrecognized types). In a *scoped* integration (the user asked for specific device types), skip out-of-scope devices with a logged reason and **omit** the default catch-all. See "Scope: Generate Only Requested Device Types".
 4. **Role-aware mapping** — differentiate devices of same type but different roles
 5. **Multi-channel awareness** — filter duplicate Z-Wave endpoints
 6. **Profile names must exist** — every `profile` returned by `mapper.map_device()` must match a `name:` in `profiles/*.yml`
+
+## Scope: Generate Only Requested Device Types
+
+**Match the generated driver to what the user actually asked for. Do not emit the full
+catalog by default.** The rule table, profile templates, and capability list in these
+skills are a **reference of everything possible**, not a checklist to generate in full.
+
+Decide the scope from the request before generating:
+
+| Request | Generate (child profiles + rules + emit/command/capabilities) |
+|---|---|
+| "a light" / "lights" | `switch` (on/off) and `dimmer` (dimmable) only |
+| "a dimmable light" / "dimmer" | `dimmer` only |
+| "an on/off light" / "switch" | `switch` only |
+| "blinds", "a motion sensor", … | only the named kind(s) |
+| "all devices" / "full/complete integration" / a long list | the full catalog + `default` catch-all |
+
+For a **scoped** driver:
+
+1. Generate child profiles **only** for the in-scope kinds (plus the always-required bridge
+   profile and `refresh`).
+2. Include `MAPPING_RULES` entries **only** for the in-scope kinds. Delete the others —
+   do not leave rules that reference profiles you did not generate.
+3. Register `supported_capabilities` and command handlers **only** for the in-scope kinds.
+4. **Skip out-of-scope devices in the mapper** (return `nil` with a reason) instead of
+   mapping them to a default card. Do **not** generate the `vendor-default` profile or the
+   catch-all rule. A bridge to a hub full of sensors must surface only the requested kind,
+   not dozens of unwanted cards.
+
+```lua
+-- Scoped driver: only lights are in scope. Everything else is skipped, not defaulted.
+local IN_SCOPE_KINDS = { switch = true, dimmer = true }
+
+-- ... after the skip filters, run the (scoped) MAPPING_RULES ...
+for _, rule in ipairs(MAPPING_RULES) do      -- contains ONLY switch/dimmer rules
+  if rule.match(match_context) then
+    return build_mapped(device, rule, label, room_id, room_name)
+  end
+end
+
+-- No in-scope rule matched → SKIP (do NOT fall back to a default card in scoped mode)
+return nil, "out of scope (requested: light only)"
+```
+
+> When the user later wants more device types, they re-request with the new kinds and the
+> driver is extended (see "Adding New Device Types"). Default to the **narrowest** driver
+> that satisfies the request.
 
 ## Profile Name Contract
 
@@ -298,12 +345,13 @@ if room_name ~= "" then
 end
 ```
 
-## Default Card Fallback
+## Default Card Fallback (full integrations only)
 
-**Never skip a device.** If no mapping rule matches, create a default card:
+In a **full** integration (user asked for all devices), never skip a device — if no
+mapping rule matches, create a default card so nothing is invisible:
 
 ```lua
--- After all MAPPING_RULES checked with no match:
+-- After all MAPPING_RULES checked with no match (FULL integration only):
 return {
   id = device.id,
   key = child_key_for_id(device.id),
@@ -314,6 +362,11 @@ return {
   raw = device,
 }
 ```
+
+In a **scoped** integration (see "Scope: Generate Only Requested Device Types"), do the
+opposite: a no-match means out-of-scope, so `return nil, "out of scope"` and do **not**
+generate `vendor-default`. Surfacing a default card for every unrequested device is the
+over-generation bug to avoid.
 
 ## Return Value Structure
 

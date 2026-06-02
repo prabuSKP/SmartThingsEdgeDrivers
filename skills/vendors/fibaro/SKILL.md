@@ -23,8 +23,8 @@ Fibaro requires HTTP Basic Authentication for all local API requests. Make sure 
 When generating a Fibaro bridge Edge driver, combine this vendor skill with the generic LAN bridge skills and enforce these Fibaro-specific choices:
 
 - Use `fibaro` as the profile and child-key prefix unless the user explicitly asks for another package prefix.
-- Bridge profile: `fibaro-bridge`.
-- Child profiles should use this catalog where applicable:
+- Bridge profile: `fibaro-bridge` (always generated).
+- **Generate child profiles only for the device kinds the user requested — not the whole catalog.** The table below is the full set of Fibaro profile *names to use when a kind is in scope*; it is not a list to emit every time. A request for "a light on the HC3" yields `fibaro-bridge` + `fibaro-switch`/`fibaro-dimmer` only, with the Fibaro mapper scoped to skip every other device type (no `fibaro-default`). Generate the full catalog only when the user asks for all devices / a complete integration. See `smartthings/lan-driver/mapping/hub-profile-mapping` → "Scope: Generate Only Requested Device Types".
 
 | Kind | Profile name |
 |---|---|
@@ -38,13 +38,13 @@ When generating a Fibaro bridge Edge driver, combine this vendor skill with the 
 | Illuminance sensor | `fibaro-illuminance-sensor` |
 | Water/flood sensor | `fibaro-water-sensor` |
 | Smoke detector | `fibaro-smoke-detector` |
-| Generic fallback | `fibaro-default` |
+| Generic fallback | `fibaro-default` (full integrations only) |
 
-Every Fibaro mapper rule that returns one of these profile names must have a matching `name:` in `profiles/*.yml`.
+Every Fibaro mapper rule that returns one of these profile names must have a matching `name:` in `profiles/*.yml` — **and** every generated profile must have a mapper rule that uses it. Do not generate a profile (or a rule) for a kind that is out of the requested scope.
 
 For Add device discovery:
 
-- **The Fibaro hub must appear as exactly one bridge.** Do NOT create the manual placeholder unconditionally before `while should_continue()` while the mDNS scan also creates a bridge — that produces two devices for the same hub (one `fibaro-hc3:<serial>` from mDNS and one `fibaro-...-manual` for the fixed IP). Run mDNS first; create the manual/fixed-IP placeholder only as a **fallback after the loop** when no hub was discovered. See `smartthings/lan-driver/discovery/hub-discovery` → "Single-Bridge Reconciliation".
+- **The Fibaro hub must appear as exactly one bridge — and it must be visible during the scan.** Fibaro HC2/HC3 hubs generally do **not** advertise over mDNS, so create the manual/fixed-IP placeholder **up front**, at the start of `discover()` (idempotent, gated on `any_bridge_exists`), so the user always has a bridge to configure during the scan window. **Do not defer it to after the loop** — that leaves the scan empty and is why the hub "never shows up." Singleness comes from **reconciliation, not deferral**: see the next bullet. See `smartthings/lan-driver/discovery/hub-discovery` → "Single-Bridge Reconciliation".
 - **Reconcile by identity before creating.** Match existing bridges by DNI, `serialNumber`, OR host and update in place, so the mDNS path adopts a manually configured bridge (and vice-versa) instead of duplicating it. Once a real hub is discovered, delete a leftover unconfigured manual placeholder.
 - Do not rely on broad SSDP matches like `upnp:rootdevice` without validating the candidate as Fibaro. Many unrelated LAN devices match that term.
 - Prefer `st.mdns` for HC3-style flows, and validate candidates using service name, TXT fields such as `platform` / `serialNumber`, or `/api/settings/info`.

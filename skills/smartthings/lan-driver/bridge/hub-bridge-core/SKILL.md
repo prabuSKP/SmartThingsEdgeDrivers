@@ -237,6 +237,72 @@ local function api_new(config, label)
 end
 ```
 
+> **`ApiClient.new` / `api_new` must NOT be wrapped in `pcall`.** It is a pure Lua
+> constructor (no network I/O) that never throws. Only wrap actual network calls in `pcall`.
+> The `pcall` return signature is `(ok_bool, result_or_error)` — NOT `(result, error)`.
+> Confusing the two produces a fatal silent bug: the guard `if result == nil or error ~= nil`
+> is always true (the ApiClient object is the "error" arg) so every request fails at startup.
+> WRONG → CORRECT:
+> ```lua
+> -- WRONG (confuses pcall return order):
+> local api, api_err = pcall(ApiClient.new, config)
+> if api == nil or api_err ~= nil then ...  -- api_err is the ApiClient; always non-nil
+>
+> -- CORRECT (call constructor directly; wrap network ops not constructors):
+> local api = ApiClient.new(config)
+> ```
+
+## `src/lunchbox/rest.lua` — use `luncheon` for HTTP building
+
+When bundling `src/lunchbox/rest.lua`, build HTTP requests via `luncheon.request` and
+`luncheon.response` (system SDK modules), **not** by concatenating raw HTTP strings.
+Raw string building is error-prone: the most common mistake is setting the `Host:` header
+to the URL scheme (`"http"`) instead of the hostname, because `_parse_url()` returns
+multiple values and string concatenation silently truncates to the first.
+
+```lua
+-- src/lunchbox/rest.lua — correct pattern
+local socket  = require "cosock.socket"
+local Request = require "luncheon.request"    -- SmartThings system SDK module
+local Response = require "luncheon.response"  -- SmartThings system SDK module
+local lb_utils = require "lunchbox.util"      -- provides force_url_table
+
+local RestClient = {}
+RestClient.__index = RestClient
+
+function RestClient.new(base_url, socket_builder)
+  base_url = lb_utils.force_url_table(base_url)  -- parses scheme/host/port into table
+  return setmetatable({ base_url = base_url, socket_builder = socket_builder, socket = nil }, RestClient)
+end
+
+function RestClient:get(path, additional_headers, retry_fn)
+  -- Request.new + :add_header sets Host correctly from self.base_url.host (NOT scheme)
+  local request = Request.new("GET", path, nil)
+    :add_header("host", tostring(self.base_url.host))
+    :add_header("connection", "keep-alive")
+  for k, v in pairs(additional_headers or {}) do
+    request = request:add_header(k, v)
+  end
+  return execute_request(self, request, retry_fn)
+end
+
+function RestClient:post(path, body_string, additional_headers, retry_fn)
+  local request = Request.new("POST", path, nil)
+    :add_header("host", tostring(self.base_url.host))
+    :add_header("connection", "keep-alive")
+  for k, v in pairs(additional_headers or {}) do
+    request = request:add_header(k, v)
+  end
+  request = request:append_body(body_string or "")
+  return execute_request(self, request, retry_fn)
+end
+```
+
+Key: `self.base_url` is a parsed URL table (via `lb_utils.force_url_table`), so
+`self.base_url.host` is the actual hostname string — never the scheme. The response is
+parsed by `Response.source(function() return sock:receive("*l") end)` which handles
+chunked transfer encoding, Content-Length, and empty bodies correctly.
+
 ## Adapter Pattern (Multi-Controller Support)
 
 When a hub has multiple firmware versions or controller families (e.g., Fibaro HC2 vs HC3),

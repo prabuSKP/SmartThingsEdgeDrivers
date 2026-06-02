@@ -18,15 +18,16 @@ This skill contains standard, production-ready boilerplates for building SmartTh
 Generated LAN bridge drivers must satisfy these rules before they are considered usable:
 
 1. Put a startup log at the very top of `src/init.lua`, immediately after `local log = require "log"` and before vendor/API imports. This makes hub logs prove whether `init.lua` started or failed during `require(...)`.
-2. Use the current Edge driver constructor key `discovery = discovery.discover` or `discovery = discovery.start`. Do not use `discovery_handler` in newly generated drivers.
-3. **One hub = exactly one bridge.** Do NOT create a manual/fixed-IP placeholder unconditionally before the scan loop while auto-discovery (mDNS/SSDP) also creates a bridge — that makes the same hub appear twice in the app ("one for mDNS, one for fixed IP"). Run auto-discovery first; create the manual placeholder only as a *fallback after the loop* when nothing was discovered; and reconcile every bridge create by DNI/serial/host so all sources converge on one device. See `discovery/hub-discovery` → "Single-Bridge Reconciliation".
-4. Every `profile = "..."` string used in Lua must match a `name:` in one file under `profiles/*.yml`.
-5. Avoid broad SSDP terms such as `upnp:rootdevice` unless discovery validates manufacturer/model/TXT/description before creating a device.
-6. Prefer `require "st.base64"` for Basic Auth unless the target runtime is known to provide a plain `base64` module.
-7. Do not expose an `https` preference unless the generated API client actually implements TLS. If only raw TCP HTTP is implemented, generate HTTP-only preferences.
-8. Pass capability handlers into the `Driver(...)` constructor as `capability_handlers = commands.capability_handlers`. Do not generate `driver:register_capability_handler(...)`; that method is not available in the Edge runtime.
-9. Do not generate `require "cosock.http"` as the default REST client. Use packaged `lunchbox.rest` or raw `cosock.socket` / `cosock.ssl`; if `lunchbox.rest` is required, include `src/lunchbox/rest.lua` and `src/lunchbox/util.lua`.
-10. Include a final validation checklist in the generated output: package with SmartThings CLI, compare mapper profile names to profile YAML names, and confirm startup/discovery logs on the hub.
+2. **Every Lua source file MUST live under `src/`** — including `src/handlers/`, `src/vendor/`, and `src/lunchbox/`. Lua module paths are rooted at `src/`: `require "handlers.commands"` → `src/handlers/commands.lua`; `require "vendor.sync"` → `src/vendor/sync.lua`. **Only `src/` is packaged**, so any `.lua` placed outside it (e.g. a top-level `handlers/commands.lua`) is silently dropped, its `require` fails during load, `init.lua` crashes, the driver never runs, and **no device — not even the bridge — appears when the user scans.** Never emit a `.lua` file outside `src/`. If `init.lua` requires `handlers.commands`, the file must be created at `src/handlers/commands.lua`, not `handlers/commands.lua`.
+3. Use the current Edge driver constructor key `discovery = discovery.discover` or `discovery = discovery.start`. Do not use `discovery_handler` in newly generated drivers.
+4. **One hub = exactly one bridge — visible during the scan.** Create the manual/fixed-IP placeholder **up front** at the start of `discover()` (idempotent, gated on `any_bridge_exists`) so the user always has a configurable bridge during the scan window — hubs like Fibaro HC2/HC3 never answer mDNS, so a placeholder deferred to after the loop means the hub *never appears*. Singleness comes from **reconciliation, not deferral**: every bridge create reconciles by DNI/serial/host (update the placeholder in place, never mint a second DNI), and the stale unconfigured stub is removed once a real hub is discovered. See `discovery/hub-discovery` → "Single-Bridge Reconciliation".
+5. Every `profile = "..."` string used in Lua must match a `name:` in one file under `profiles/*.yml`.
+6. Avoid broad SSDP terms such as `upnp:rootdevice` unless discovery validates manufacturer/model/TXT/description before creating a device.
+7. Prefer `require "st.base64"` for Basic Auth unless the target runtime is known to provide a plain `base64` module.
+8. Do not expose an `https` preference unless the generated API client actually implements TLS. If only raw TCP HTTP is implemented, generate HTTP-only preferences.
+9. Pass capability handlers into the `Driver(...)` constructor as `capability_handlers = commands.capability_handlers`. Do not generate `driver:register_capability_handler(...)`; that method is not available in the Edge runtime.
+10. Do not generate `require "cosock.http"` as the default REST client. Use packaged `lunchbox.rest` or raw `cosock.socket` / `cosock.ssl`; if `lunchbox.rest` is required, include `src/lunchbox/rest.lua` and `src/lunchbox/util.lua`.
+11. Include a final validation checklist in the generated output: package with SmartThings CLI; **confirm no `.lua` exists outside `src/`** (`find . -name '*.lua' -not -path './src/*'` must return nothing); compare mapper/`profile=` names to profile YAML names; and confirm startup/discovery logs on the hub.
 
 ---
 
@@ -36,20 +37,33 @@ Ensure your project folder matches this layout:
 
 ```
 my-bridge-driver/
-├── src/
+├── src/                         # ← ALL .lua files live here, nowhere else
 │   ├── init.lua                 # Main driver entrypoint
 │   ├── discovery.lua            # SSDP/mDNS & Manual Discovery
+│   ├── lifecycle.lua            # added/init/infoChanged/removed handlers
 │   ├── fields.lua               # Datastore Field Constants
 │   ├── utils.lua                # Helper utilities
-│   └── vendor/
-│       ├── api.lua              # REST API Client
-│       └── mapper.lua           # Device normalization
+│   ├── handlers/
+│   │   └── commands.lua         # require "handlers.commands" → THIS path
+│   ├── vendor/
+│   │   ├── api.lua              # REST API Client      (require "vendor.api")
+│   │   ├── adapter.lua          # Controller-family normalization
+│   │   ├── mapper.lua           # Device → profile mapping
+│   │   └── sync.lua             # State sync engine    (require "vendor.sync")
+│   └── lunchbox/                # only if require "lunchbox.rest" is used
+│       ├── rest.lua
+│       └── util.lua
 ├── profiles/
 │   ├── bridge.yml               # Parent device profile
 │   └── switch.yml               # Child device profile (example)
 ├── config.yml                   # Driver packaging manifest
 └── search-parameters.yml        # mDNS/SSDP search targets (optional)
 ```
+
+**`handlers/`, `vendor/`, and `lunchbox/` are subdirectories of `src/`, not of the project
+root.** A file at `./handlers/commands.lua` (sibling of `src/`) will not be packaged, and
+`require "handlers.commands"` will fail at load — the driver will not start and nothing
+appears on scan. This is a common and silent generation defect; check it explicitly.
 
 ---
 
@@ -309,27 +323,43 @@ local function usable_bridge_exists(driver)
   return false
 end
 
+-- Once a real hub is discovered/configured, delete the leftover unconfigured manual
+-- placeholder so the hub maps to exactly one device.
+local function remove_stale_manual_placeholder(driver)
+  local manual = driver:get_device_by_dni(MANUAL_BRIDGE_DNI)
+  if manual == nil then return end
+  local host = manual:get_field("bridge_host")
+    or (manual.preferences and manual.preferences.host)
+  if host ~= nil and host ~= "" then return end   -- user configured it → keep
+  if type(driver.try_delete_device) == "function" then
+    log.info_with({ hub_logs = true },
+      "[Discovery] Removing stale manual placeholder; real bridge discovered")
+    driver:try_delete_device(manual.id)
+  end
+end
+
 function discovery.discover(driver, opts, should_continue)
   log.info_with({ hub_logs = true }, "[Discovery] Starting discovery")
 
-  -- Auto-discovery FIRST. Do NOT create the manual placeholder here — creating it
-  -- unconditionally while a scan also creates a bridge is what makes a hub appear twice.
+  -- UP FRONT: create the manual/fixed-IP placeholder NOW (idempotent, gated on
+  -- any_bridge_exists) so a configurable bridge is visible during the scan window —
+  -- essential for hubs that never answer mDNS. Singleness comes from reconciliation
+  -- below, NOT from deferring this. Deferring it hides the bridge when the scan is silent.
+  if not any_bridge_exists(driver) then
+    discovery.create_manual_bridge(driver)
+  end
+
   while should_continue() do
     -- Add mDNS/SSDP scans here. Validate each result, then reconcile by DNI/serial/host
-    -- (update an existing bridge in place, else create exactly one). For example:
+    -- (update the existing placeholder in place, else create exactly one). For example:
     --   discovery.do_mdns_scan(driver)
 
     if usable_bridge_exists(driver) then
+      -- Real/configured bridge exists → drop the stale unconfigured stub, then stop.
+      remove_stale_manual_placeholder(driver)
       break
     end
     socket.sleep(5)
-  end
-
-  -- Fallback only: nothing discovered → create the manual/fixed-IP placeholder so the
-  -- user can still enter an IP. Keeping this out of the loop and gated on "no bridge
-  -- exists" is what guarantees a single bridge device per hub.
-  if not any_bridge_exists(driver) then
-    discovery.create_manual_bridge(driver)
   end
 
   log.info_with({ hub_logs = true }, "[Discovery] Ending discovery")
@@ -339,10 +369,12 @@ return discovery
 ```
 
 > **Single-bridge rule:** the manual placeholder and any auto-discovered bridge must
-> resolve to **one** device. Generate the manual placeholder as a post-loop fallback (as
-> above), and make the scan's create path reconcile by DNI/serial/host. Never emit
-> `discovery.create_manual_bridge(driver)` unconditionally before the loop alongside an
-> mDNS/SSDP create — that is the classic "hub appears twice" bug. Full reference handler:
+> resolve to **one** device. Create the manual placeholder **up front** (idempotent, gated
+> on `any_bridge_exists`) so it is visible during the scan, and make the scan's create path
+> **reconcile by DNI/serial/host** (update the placeholder in place, never mint a second
+> DNI), then remove the stale unconfigured stub once a real bridge exists. Singleness comes
+> from reconciliation, **not** from deferring the placeholder to after the loop — deferral
+> hides the bridge whenever the hub does not answer mDNS. Full reference handler:
 > `discovery/hub-discovery`.
 
 ---
@@ -367,6 +399,21 @@ Do not generate `require "cosock.http"` or `ltn12` for Edge LAN drivers unless t
 target runtime and package explicitly provide those modules. A generated driver
 that uses `lunchbox.rest` must also include `src/lunchbox/rest.lua` and
 `src/lunchbox/util.lua` in the package.
+
+> **pcall MUST NOT wrap `ApiClient.new`.** Constructors are pure Lua — no network I/O, never
+> throw. `pcall` returns `(ok_bool, result_or_error)`, not `(result, error)`. Wrapping a
+> constructor in pcall and then checking `if result == nil or error ~= nil` is always true
+> (the constructed object is the "error" argument), silently breaking all API calls. Call
+> `ApiClient.new(config)` directly. Reserve `pcall` for actual network calls (`:get`, `:post`).
+>
+> **`src/lunchbox/rest.lua` must use `luncheon.request` / `luncheon.response`** — never build
+> HTTP request strings by string concatenation. Raw string building causes the Host: header to
+> contain the URL scheme (`"http"`) rather than the hostname, because `_parse_url()` returns
+> `(scheme, host, port)` but string concatenation silently takes only the first return value.
+> Use `Request.new("GET", path, nil):add_header("host", tostring(self.base_url.host))` with
+> `self.base_url` parsed by `lb_utils.force_url_table(base_url)`. See
+> `bridge/hub-bridge-core` → "src/lunchbox/rest.lua — use luncheon for HTTP building" for the
+> full canonical implementation.
 
 ```lua
 local base64 = require "st.base64"

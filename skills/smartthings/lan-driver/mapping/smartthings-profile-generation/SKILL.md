@@ -14,6 +14,21 @@ description: >
 Device profiles define what a SmartThings device looks like in the app — its
 capabilities, UI components, and device category.
 
+## Generate Only the Requested Profiles
+
+**The templates below are a catalog of what's possible, not a list to emit in full.**
+Generate a profile YAML **only** for each device kind the user actually requested, plus
+the always-required bridge profile.
+
+- "develop a driver for a light on my HC3" → generate `*-bridge` + `*-switch` and/or
+  `*-dimmer`. Do **not** also generate blind/contact/motion/sensor/smoke/default profiles.
+- Only generate the full catalog (and the `*-default` catch-all) when the user asks for
+  "all devices" / a "full/complete integration" or lists many types.
+- Keep the profile set, the `MAPPING_RULES`, the `supported_capabilities`, and the command
+  handlers in lockstep — generating an unused profile (or a rule that points at one) is the
+  over-generation defect. See `mapping/hub-profile-mapping` → "Scope: Generate Only
+  Requested Device Types".
+
 ## Profile YAML Structure
 
 ```yaml

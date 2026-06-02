@@ -130,6 +130,8 @@ ssdp:
 
 ## Step 4: Discovery Handler Implementation
 
+> **API + shape note (read before generating).** The function is **`mdns.discover(service_type, domain)`** — there is **no `mdns.resolve`**. Its real return is `{ found = { { host_info = { address, port }, service_info = { name, ... }, txt = { text = { "k=v", ... } } } } }`, **not** a flat array of `{ host, port, txt }`. The simplified `service.host` / `service.txt.serialNumber` shape below is illustrative only. For production, normalize the raw `answer.found` entries into `{ name, host, port, txt }` inside a `discovery_provider.scan_mdns_services()` — see the **hub-discovery** skill's "Discovery Provider (mDNS)" section for the canonical, copyable implementation.
+
 ```lua
 -- discovery.lua
 local mdns = require "st.mdns"
@@ -220,12 +222,14 @@ end
 
 The user then enters the hub IP, port, and credentials in the SmartThings device settings.
 
-> **Gate this — do not call it unconditionally.** The manual placeholder is a *fallback*.
-> If you create it before/alongside the mDNS scan that also creates a bridge, the same hub
-> shows up **twice** (one mDNS device + one manual device). Call `create_manual_bridge`
-> only **after** the discovery loop and only when no bridge was found
-> (`if not any_bridge_exists(driver) then ...`), and reconcile mDNS creates by
-> DNI/serial/host. Full pattern: `discovery/hub-discovery` → "Single-Bridge Reconciliation".
+> **Create this up front, but make it idempotent.** Call `create_manual_bridge` at the
+> **start** of `discover()` (guarded by `if not any_bridge_exists(driver) then ...`, so a
+> re-scan never adds a second one) — the user must see a configurable bridge *during* the
+> scan, since many hubs (Fibaro HC2/HC3) never answer mDNS. **Do not defer it to after the
+> loop**; that hides the bridge whenever mDNS is silent. The "same hub appears twice" bug is
+> prevented by **reconciliation**, not deferral: make every mDNS create look up an existing
+> bridge by DNI/serial/host and update it in place, then delete the stale unconfigured stub
+> once a real bridge is found. Full pattern: `discovery/hub-discovery` → "Single-Bridge Reconciliation".
 
 ## Step 6: Scheduled Re-Discovery
 

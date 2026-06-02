@@ -50,6 +50,24 @@ SmartThings Hub → Edge Driver → 3rd-Party Hub API → Child Devices
 
 **Pattern B is the dominant architecture for 3rd-party hub integrations.** The Fibaro driver is a production reference implementation of this pattern.
 
+## Scope Decision (do this before generating)
+
+A bridge driver *can* surface every device on the hub, but **only generate what the user
+asked for.** Read the request and pick the scope:
+
+- **Scoped** (default when the user names specific device types — "a light", "a dimmer",
+  "blinds"): generate the bridge profile plus profiles/mapper-rules/capabilities/command
+  handlers **only** for those kinds. The mapper **skips** out-of-scope hub devices (returns
+  `nil`); do **not** generate a `*-default` catch-all. A "light" driver on a hub full of
+  sensors must show only lights.
+- **Full** (only when the user asks for "all devices", a "full/complete integration", or
+  lists many types): generate the whole catalog plus the `*-default` catch-all.
+
+Keep profiles, `MAPPING_RULES`, `supported_capabilities`, and command handlers in lockstep
+with the chosen scope — emitting an unused profile (or a rule pointing at one) is an
+over-generation defect. Details: `mapping/hub-profile-mapping` → "Scope: Generate Only
+Requested Device Types".
+
 ## Development Workflow
 
 ### Phase 1: Discovery — How does SmartThings find the device/hub?

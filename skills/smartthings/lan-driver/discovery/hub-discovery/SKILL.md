@@ -15,7 +15,7 @@ hub discovery handler.
 
 ## Non-Negotiable Discovery Rules
 
-1. **One hub = exactly one bridge device.** A hub is reachable through several discovery sources (mDNS, fixed-IP/manual entry, a vendor find-service), but all of them must converge on a **single** bridge in the app. **Never create an unconditional manual placeholder *and* an auto-discovered bridge** — that is the #1 cause of a hub showing up twice ("one for mDNS, one for fixed IP"). The manual/fixed-IP placeholder is a **fallback**, created only when auto-discovery yields no usable bridge. See "Single-Bridge Reconciliation" below — this is mandatory.
+1. **One hub = exactly one bridge device — and that bridge must be visible *during* the scan window.** A hub is reachable through several discovery sources (mDNS, fixed-IP/manual entry, a vendor find-service), but all of them must converge on a **single** bridge in the app. Create the manual/fixed-IP placeholder **up front, at the start of `discover()`** (idempotent, DNI-guarded), so the user always has a bridge to configure even when the hub never answers mDNS (many hubs — Fibaro HC2/HC3 included — do not advertise over mDNS). **"One hub = one bridge" comes from reconciliation, NOT from deferring the placeholder.** Do **not** move the placeholder to *after* the scan loop as a "fallback" — that hides the bridge for the entire scan window when mDNS is silent, which is the #1 reason a hub "never shows up." Singleness is guaranteed by rule #2 (reconcile by identity) plus removing the stale unconfigured stub once a real bridge is found. See "Single-Bridge Reconciliation" below — this is mandatory.
 2. **Reconcile by hub identity, not by DNI alone.** Before `driver:try_create_device()`, look for an existing bridge by **DNI, serial, OR host** and update it in place if found. Two sources that resolve the same hub (e.g. mDNS serial vs. a manually entered IP) must update one device, not mint two DNIs.
 3. Network scan results must be validated before `driver:try_create_device()`. Match on manufacturer, model, service name, TXT payload, serial, or fetched description/API identity.
 4. Avoid `upnp:rootdevice` as the only SSDP filter for production generation. It wakes the driver for unrelated devices. If broad SSDP is unavoidable, treat it as a candidate source only and reject non-target devices before creating anything.
@@ -33,6 +33,12 @@ SmartThings Hub calls discovery.discover(driver, opts, should_continue)
 ┌─────────────────────────────────────────────┐
 │  Discovery Handler (single-bridge)           │
 │                                              │
+│  UP FRONT (before the loop):                 │
+│    If NO bridge exists at all → create the   │
+│    manual / fixed-IP placeholder NOW so a    │
+│    configurable bridge is visible during the │
+│    scan (idempotent, DNI-guarded).           │
+│                                              │
 │  Loop while should_continue():               │
 │    1. Run mDNS / SSDP scan                   │
 │    2. Validate each candidate (serial/TXT)   │
@@ -40,14 +46,10 @@ SmartThings Hub calls discovery.discover(driver, opts, should_continue)
 │         update in place, else create ONE     │
 │    4. If a usable bridge now exists:         │
 │         remove stale manual placeholder, stop│
-│                                              │
-│  After loop: if NO bridge exists at all →    │
-│    create manual / fixed-IP placeholder      │
-│    (fallback for when auto-discovery fails)  │
 └─────────────────────────────────────────────┘
 ```
 
-### Why a hub shows up twice (the bug this prevents)
+### Single-Bridge Reconciliation — why a hub shows up twice (and how this prevents it)
 
 The most common discovery defect is a hub appearing as **two bridges** — "one from mDNS,
 one for the fixed IP." It happens when the driver does both of these independently:
@@ -57,11 +59,18 @@ create_manual_bridge()        -- DNI "vendor-manual"      (the fixed-IP device)
 do_mdns_scan() → create        -- DNI "vendor-<serial>"    (the discovered device)
 ```
 
-Two different DNIs ⇒ two devices for one physical hub. The fix is structural, not a
-dedup patch: **auto-discovery runs first and owns bridge creation; the manual placeholder
-is only created as a fallback when nothing is found; and any creation reconciles by
-DNI/serial/host so the sources converge on one device.** Do not emit a generator that
-calls `create_manual_bridge` unconditionally before the scan loop.
+Two different DNIs ⇒ two devices for one physical hub. The fix is **reconciliation, not
+deferral**: create the manual placeholder up front so the user sees a bridge during the
+scan, but make every creation path reconcile by **DNI/serial/host** so the mDNS result
+*adopts/updates* the existing placeholder instead of minting a second device — and delete
+the stale unconfigured stub once a real bridge is confirmed. The sources converge on one
+device because they look each other up before creating, not because one of them is delayed.
+
+> **Do not "fix" the duplicate by deferring the manual placeholder to after the scan
+> loop.** That is the opposite over-correction: it removes the duplicate by removing the
+> bridge entirely for the whole scan window, so on a hub that does not answer mDNS (HC2/HC3)
+> the user taps "Scan" and *nothing appears*. Keep the placeholder up front; rely on
+> `find_existing_bridge()` + `remove_stale_manual_placeholder()` for singleness.
 
 ## Complete Discovery Handler
 
@@ -118,28 +127,33 @@ end
 function discovery.discover(driver, opts, should_continue)
   log.info_with({ hub_logs = true }, "[Discovery] Starting hub discovery")
 
-  -- Auto-discovery runs FIRST. Do NOT pre-create a manual placeholder here: creating one
-  -- unconditionally while mDNS also creates a bridge is exactly what makes the hub appear
-  -- twice (one mDNS device + one manual/fixed-IP device). The manual placeholder is a
-  -- fallback, created after the loop only if nothing was discovered.
+  -- 1. UP-FRONT placeholder. Create the manual/fixed-IP bridge NOW, before the scan
+  --    loop, so the user always has a configurable bridge visible during the scan
+  --    window — critical for hubs that do not answer mDNS (Fibaro HC2/HC3). This is
+  --    idempotent (DNI-guarded), so a re-scan never adds a second one. Singleness is
+  --    guaranteed by reconciliation (step 3) + stale-stub removal (step 4), NOT by
+  --    deferring this call. Deferring it to after the loop hides the bridge for the
+  --    whole scan and is the #1 cause of "the hub never shows up."
+  if not any_bridge_exists(driver) then
+    discovery.create_manual_bridge(driver)
+  end
+
+  -- 2. Auto-discovery. mDNS results RECONCILE against the placeholder (by DNI/serial/
+  --    host) so they update it in place instead of creating a duplicate.
   while should_continue() do
     local ok, err = pcall(discovery.do_mdns_scan, driver)
     if not ok then
       log.warn_with({ hub_logs = true }, "[Discovery] mDNS scan error: " .. tostring(err))
     end
 
+    -- 4. A real/configured bridge now exists → drop the unconfigured stub so the
+    --    hub maps to exactly one device, then stop.
     if usable_bridge_exists(driver) then
-      remove_stale_manual_placeholder(driver)   -- collapse to a single device
+      remove_stale_manual_placeholder(driver)
       break
     end
 
     socket.sleep(5)
-  end
-
-  -- Fallback: nothing auto-discovered → offer the manual/fixed-IP placeholder so the
-  -- user can still enter an IP. Created only when no bridge exists at all.
-  if not any_bridge_exists(driver) then
-    discovery.create_manual_bridge(driver)
   end
 
   log.info_with({ hub_logs = true }, "[Discovery] Discovery session ended")
@@ -347,39 +361,64 @@ function lifecycle.init(driver, device)
 end
 ```
 
-## Hardcoded IP Fallback (Discovery Provider)
+## Discovery Provider (mDNS) — correct `st.mdns` API
 
-For environments where mDNS is unreliable:
+The discovery handler above calls `provider.scan_mdns_services()`. Generate it as a **real**
+provider using the actual `st.mdns` API. The function is **`mdns.discover(service_type, domain)`**
+— there is **no `mdns.resolve`** (a frequent hallucination; it does not exist and the driver
+will error at scan time). `mdns.discover` returns a table whose `.found` array holds entries
+shaped `{ host_info = { address, port }, service_info = { name, service_type, domain }, txt = { text = { "k=v", ... } } }`.
+Normalize each entry into the flat `{ name, host, port, txt }` shape the handler consumes:
 
 ```lua
 -- discovery_provider.lua
+local log = require "log"
+
 local provider = {}
 
--- Hardcoded fallback IPs to check
-local FALLBACK_HOSTS = {
-  { host = "192.168.1.100", port = 80, scheme = "http" },
-  { host = "192.168.1.101", port = 443, scheme = "https" },
-}
+local SERVICE_TYPE = "_http._tcp"   -- from search-parameters.yml / mdns-analysis
+local DOMAIN       = "local"
 
+-- mDNS TXT records arrive as an array of "key=value" strings; flatten to a table.
+local function parse_txt(entry)
+  local txt = {}
+  local raw = entry.txt and entry.txt.text
+  if type(raw) == "table" then
+    for _, kv in ipairs(raw) do
+      local k, v = tostring(kv):match("^([^=]+)=(.*)$")
+      if k then txt[k] = v end
+    end
+  end
+  return txt
+end
+
+-- Scan for hubs via mDNS. Returns an array of { name, host, port, txt } tables.
+-- Returns an empty table on any failure — non-fatal, because the up-front manual
+-- placeholder already gives the user a bridge to configure by IP.
 function provider.scan_mdns_services()
   local results = {}
 
-  -- Try mDNS first
-  -- ... (mDNS scanning code)
+  local ok, mdns = pcall(require, "st.mdns")
+  if not ok then
+    log.warn("[Discovery] st.mdns not available on this hub runtime")
+    return results
+  end
 
-  -- If no mDNS results, try hardcoded IPs
-  if #results == 0 then
-    for _, fallback in ipairs(FALLBACK_HOSTS) do
-      local ok = try_connect(fallback.host, fallback.port)
-      if ok then
-        table.insert(results, {
-          name = "manual",
-          host = fallback.host,
-          port = fallback.port,
-          txt = {},
-        })
-      end
-    end
+  -- CORRECT API: mdns.discover(service_type, domain). NOT mdns.resolve(...).
+  local ok_scan, answer = pcall(mdns.discover, SERVICE_TYPE, DOMAIN)
+  if not ok_scan or type(answer) ~= "table" or type(answer.found) ~= "table" then
+    log.info("[Discovery] mDNS discover returned no services")
+    return results
+  end
+
+  for _, entry in ipairs(answer.found) do
+    local host_info = entry.host_info or {}
+    table.insert(results, {
+      name = entry.service_info and entry.service_info.name or "",
+      host = host_info.address,
+      port = host_info.port or 80,
+      txt  = parse_txt(entry),
+    })
   end
 
   return results
@@ -387,6 +426,9 @@ end
 
 return provider
 ```
+
+> Target-hub filtering (manufacturer/platform/serial) is done by `discovery.is_target_hub`
+> in the handler, so the provider returns all candidates and stays vendor-agnostic.
 
 ## Scheduled Re-Discovery
 
