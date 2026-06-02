@@ -19,7 +19,7 @@ Generated LAN bridge drivers must satisfy these rules before they are considered
 
 1. Put a startup log at the very top of `src/init.lua`, immediately after `local log = require "log"` and before vendor/API imports. This makes hub logs prove whether `init.lua` started or failed during `require(...)`.
 2. Use the current Edge driver constructor key `discovery = discovery.discover` or `discovery = discovery.start`. Do not use `discovery_handler` in newly generated drivers.
-3. For manual hub setup flows, create the bridge placeholder once before entering `while should_continue()`; the loop is only for repeated network scans.
+3. **One hub = exactly one bridge.** Do NOT create a manual/fixed-IP placeholder unconditionally before the scan loop while auto-discovery (mDNS/SSDP) also creates a bridge — that makes the same hub appear twice in the app ("one for mDNS, one for fixed IP"). Run auto-discovery first; create the manual placeholder only as a *fallback after the loop* when nothing was discovered; and reconcile every bridge create by DNI/serial/host so all sources converge on one device. See `discovery/hub-discovery` → "Single-Bridge Reconciliation".
 4. Every `profile = "..."` string used in Lua must match a `name:` in one file under `profiles/*.yml`.
 5. Avoid broad SSDP terms such as `upnp:rootdevice` unless discovery validates manufacturer/model/TXT/description before creating a device.
 6. Prefer `require "st.base64"` for Basic Auth unless the target runtime is known to provide a plain `base64` module.
@@ -288,15 +288,48 @@ function discovery.create_manual_bridge(driver)
   end
 end
 
+local function any_bridge_exists(driver)
+  for _, device in ipairs(driver:get_devices()) do
+    if device.parent_device_id == nil then return true end
+  end
+  return false
+end
+
+-- A bridge we can talk to: an auto-discovered bridge, or the manual placeholder once the
+-- user has entered a host. A bare placeholder does not count, so the scan keeps looking.
+local function usable_bridge_exists(driver)
+  for _, device in ipairs(driver:get_devices()) do
+    if device.parent_device_id == nil then
+      if device.device_network_id ~= MANUAL_BRIDGE_DNI then return true end
+      local host = device:get_field("bridge_host")
+        or (device.preferences and device.preferences.host)
+      if host ~= nil and host ~= "" then return true end
+    end
+  end
+  return false
+end
+
 function discovery.discover(driver, opts, should_continue)
   log.info_with({ hub_logs = true }, "[Discovery] Starting discovery")
 
-  -- Manual bridge creation is outside the loop so scan timing cannot suppress it.
-  discovery.create_manual_bridge(driver)
-
+  -- Auto-discovery FIRST. Do NOT create the manual placeholder here — creating it
+  -- unconditionally while a scan also creates a bridge is what makes a hub appear twice.
   while should_continue() do
-    -- Add mDNS/SSDP scans here, and validate each network result before creating devices.
+    -- Add mDNS/SSDP scans here. Validate each result, then reconcile by DNI/serial/host
+    -- (update an existing bridge in place, else create exactly one). For example:
+    --   discovery.do_mdns_scan(driver)
+
+    if usable_bridge_exists(driver) then
+      break
+    end
     socket.sleep(5)
+  end
+
+  -- Fallback only: nothing discovered → create the manual/fixed-IP placeholder so the
+  -- user can still enter an IP. Keeping this out of the loop and gated on "no bridge
+  -- exists" is what guarantees a single bridge device per hub.
+  if not any_bridge_exists(driver) then
+    discovery.create_manual_bridge(driver)
   end
 
   log.info_with({ hub_logs = true }, "[Discovery] Ending discovery")
@@ -304,6 +337,13 @@ end
 
 return discovery
 ```
+
+> **Single-bridge rule:** the manual placeholder and any auto-discovered bridge must
+> resolve to **one** device. Generate the manual placeholder as a post-loop fallback (as
+> above), and make the scan's create path reconcile by DNI/serial/host. Never emit
+> `discovery.create_manual_bridge(driver)` unconditionally before the loop alongside an
+> mDNS/SSDP create — that is the classic "hub appears twice" bug. Full reference handler:
+> `discovery/hub-discovery`.
 
 ---
 

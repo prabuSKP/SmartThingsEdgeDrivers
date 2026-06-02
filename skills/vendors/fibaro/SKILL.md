@@ -44,9 +44,10 @@ Every Fibaro mapper rule that returns one of these profile names must have a mat
 
 For Add device discovery:
 
-- Always create a manual Fibaro bridge placeholder before entering `while should_continue()` so users can configure IP/credentials even when LAN discovery is unavailable.
+- **The Fibaro hub must appear as exactly one bridge.** Do NOT create the manual placeholder unconditionally before `while should_continue()` while the mDNS scan also creates a bridge — that produces two devices for the same hub (one `fibaro-hc3:<serial>` from mDNS and one `fibaro-...-manual` for the fixed IP). Run mDNS first; create the manual/fixed-IP placeholder only as a **fallback after the loop** when no hub was discovered. See `smartthings/lan-driver/discovery/hub-discovery` → "Single-Bridge Reconciliation".
+- **Reconcile by identity before creating.** Match existing bridges by DNI, `serialNumber`, OR host and update in place, so the mDNS path adopts a manually configured bridge (and vice-versa) instead of duplicating it. Once a real hub is discovered, delete a leftover unconfigured manual placeholder.
 - Do not rely on broad SSDP matches like `upnp:rootdevice` without validating the candidate as Fibaro. Many unrelated LAN devices match that term.
-- Prefer `st.mdns` or manual IP fallback for HC3-style flows, and validate candidates using service name, TXT fields such as `platform` / `serialNumber`, or `/api/settings/info`.
+- Prefer `st.mdns` for HC3-style flows, and validate candidates using service name, TXT fields such as `platform` / `serialNumber`, or `/api/settings/info`.
 - If auto discovery is requested, generate the `st.mdns` scan and Fibaro candidate normalization code; do not generate only a sleeping placeholder loop.
 - Cache discovered host, port, scheme, serial, and platform before `try_create_device()`, then persist them during bridge lifecycle init.
 

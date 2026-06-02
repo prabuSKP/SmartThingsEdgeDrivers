@@ -220,6 +220,13 @@ end
 
 The user then enters the hub IP, port, and credentials in the SmartThings device settings.
 
+> **Gate this — do not call it unconditionally.** The manual placeholder is a *fallback*.
+> If you create it before/alongside the mDNS scan that also creates a bridge, the same hub
+> shows up **twice** (one mDNS device + one manual device). Call `create_manual_bridge`
+> only **after** the discovery loop and only when no bridge was found
+> (`if not any_bridge_exists(driver) then ...`), and reconcile mDNS creates by
+> DNI/serial/host. Full pattern: `discovery/hub-discovery` → "Single-Bridge Reconciliation".
+
 ## Step 6: Scheduled Re-Discovery
 
 For hubs with dynamic IPs, schedule periodic mDNS re-scans:

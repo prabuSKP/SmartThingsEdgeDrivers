@@ -15,12 +15,13 @@ hub discovery handler.
 
 ## Non-Negotiable Discovery Rules
 
-1. Manual bridge fallback must be created before the `while should_continue()` loop. The loop can end quickly or fail to run in some discovery sessions, so bridge creation must not depend on it.
-2. Network scan results must be validated before `driver:try_create_device()`. Match on manufacturer, model, service name, TXT payload, serial, or fetched description/API identity.
-3. Avoid `upnp:rootdevice` as the only SSDP filter for production generation. It wakes the driver for unrelated devices. If broad SSDP is unavoidable, treat it as a candidate source only and reject non-target devices before creating anything.
-4. Cache discovered host/port/scheme/serial data before `try_create_device()`, then apply it during lifecycle init.
-5. Emit hub-visible logs for discovery start, manual bridge creation, each accepted network candidate, each rejected broad candidate, and every create failure.
-6. If automatic LAN discovery is part of the requested driver behavior, generate a real discovery provider using `st.mdns` or the selected LAN mechanism. Do not leave discovery as a placeholder loop that only sleeps.
+1. **One hub = exactly one bridge device.** A hub is reachable through several discovery sources (mDNS, fixed-IP/manual entry, a vendor find-service), but all of them must converge on a **single** bridge in the app. **Never create an unconditional manual placeholder *and* an auto-discovered bridge** — that is the #1 cause of a hub showing up twice ("one for mDNS, one for fixed IP"). The manual/fixed-IP placeholder is a **fallback**, created only when auto-discovery yields no usable bridge. See "Single-Bridge Reconciliation" below — this is mandatory.
+2. **Reconcile by hub identity, not by DNI alone.** Before `driver:try_create_device()`, look for an existing bridge by **DNI, serial, OR host** and update it in place if found. Two sources that resolve the same hub (e.g. mDNS serial vs. a manually entered IP) must update one device, not mint two DNIs.
+3. Network scan results must be validated before `driver:try_create_device()`. Match on manufacturer, model, service name, TXT payload, serial, or fetched description/API identity.
+4. Avoid `upnp:rootdevice` as the only SSDP filter for production generation. It wakes the driver for unrelated devices. If broad SSDP is unavoidable, treat it as a candidate source only and reject non-target devices before creating anything.
+5. Cache discovered host/port/scheme/serial data before `try_create_device()`, then apply it during lifecycle init.
+6. Emit hub-visible logs for discovery start, manual fallback creation, each accepted network candidate, each rejected broad candidate, and every create failure.
+7. If automatic LAN discovery is part of the requested driver behavior, generate a real discovery provider using `st.mdns` or the selected LAN mechanism. Do not leave discovery as a placeholder loop that only sleeps.
 
 ## Discovery Architecture
 
@@ -30,18 +31,37 @@ User taps "Scan for devices" in SmartThings app
 SmartThings Hub calls discovery.discover(driver, opts, should_continue)
   ↓
 ┌─────────────────────────────────────────────┐
-│  Discovery Handler                           │
+│  Discovery Handler (single-bridge)           │
 │                                              │
-│  1. Check for existing bridges               │
-│  2. Create manual bridge placeholder (HC2)   │
-│  3. Run mDNS scan (HC3/modern hubs)          │
-│  4. Run SSDP scan (UPnP devices)             │
-│  5. Match against known device patterns      │
-│  6. Create bridge devices for new finds       │
+│  Loop while should_continue():               │
+│    1. Run mDNS / SSDP scan                   │
+│    2. Validate each candidate (serial/TXT)   │
+│    3. Reconcile by DNI / serial / host →     │
+│         update in place, else create ONE     │
+│    4. If a usable bridge now exists:         │
+│         remove stale manual placeholder, stop│
 │                                              │
-│  Loop while should_continue() returns true   │
+│  After loop: if NO bridge exists at all →    │
+│    create manual / fixed-IP placeholder      │
+│    (fallback for when auto-discovery fails)  │
 └─────────────────────────────────────────────┘
 ```
+
+### Why a hub shows up twice (the bug this prevents)
+
+The most common discovery defect is a hub appearing as **two bridges** — "one from mDNS,
+one for the fixed IP." It happens when the driver does both of these independently:
+
+```
+create_manual_bridge()        -- DNI "vendor-manual"      (the fixed-IP device)
+do_mdns_scan() → create        -- DNI "vendor-<serial>"    (the discovered device)
+```
+
+Two different DNIs ⇒ two devices for one physical hub. The fix is structural, not a
+dedup patch: **auto-discovery runs first and owns bridge creation; the manual placeholder
+is only created as a fallback when nothing is found; and any creation reconciles by
+DNI/serial/host so the sources converge on one device.** Do not emit a generator that
+calls `create_manual_bridge` unconditionally before the scan loop.
 
 ## Complete Discovery Handler
 
@@ -58,27 +78,68 @@ local discovery = {}
 -- Manual bridge placeholder for hubs without auto-discovery (e.g., HC2)
 local MANUAL_BRIDGE_DNI = "fibaro-manual-bridge"
 
+-- A bridge we can talk to: any auto-discovered bridge, or the manual placeholder once
+-- the user has entered a host. A bare, unconfigured placeholder does NOT count, so the
+-- scan keeps looking for the real hub.
+local function usable_bridge_exists(driver)
+  for _, device in ipairs(driver:get_devices()) do
+    if utils.is_bridge(device) then
+      if device.device_network_id ~= MANUAL_BRIDGE_DNI then return true end
+      local host = device:get_field(fields.BRIDGE_HOST)
+        or (device.preferences and device.preferences.host)
+      if host ~= nil and host ~= "" then return true end
+    end
+  end
+  return false
+end
+
+local function any_bridge_exists(driver)
+  for _, device in ipairs(driver:get_devices()) do
+    if utils.is_bridge(device) then return true end
+  end
+  return false
+end
+
+-- Once a real hub is discovered, delete a leftover unconfigured manual placeholder so
+-- the hub is represented by exactly one device.
+local function remove_stale_manual_placeholder(driver)
+  local manual = driver:get_device_by_dni(MANUAL_BRIDGE_DNI)
+  if manual == nil then return end
+  local host = manual:get_field(fields.BRIDGE_HOST)
+    or (manual.preferences and manual.preferences.host)
+  if host ~= nil and host ~= "" then return end   -- user configured it → keep
+  if type(driver.try_delete_device) == "function" then
+    log.info_with({ hub_logs = true },
+      "[Discovery] Removing stale manual placeholder; real bridge discovered")
+    driver:try_delete_device(manual.id)
+  end
+end
+
 function discovery.discover(driver, opts, should_continue)
   log.info_with({ hub_logs = true }, "[Discovery] Starting hub discovery")
 
-  -- Create manual placeholder if no bridges exist yet
-  -- This must happen before the discovery loop. Do not put manual bridge
-  -- creation inside while should_continue(); otherwise Add device scans can
-  -- complete without any bridge creation attempt.
-  local bridges = utils.get_bridge_devices(driver)
-  if #bridges == 0 then
-    discovery.create_manual_bridge(driver)
-  end
-
-  -- Discovery loop
+  -- Auto-discovery runs FIRST. Do NOT pre-create a manual placeholder here: creating one
+  -- unconditionally while mDNS also creates a bridge is exactly what makes the hub appear
+  -- twice (one mDNS device + one manual/fixed-IP device). The manual placeholder is a
+  -- fallback, created after the loop only if nothing was discovered.
   while should_continue() do
-    -- mDNS scan for modern hubs
     local ok, err = pcall(discovery.do_mdns_scan, driver)
     if not ok then
-      log.warn("[Discovery] mDNS scan error: " .. tostring(err))
+      log.warn_with({ hub_logs = true }, "[Discovery] mDNS scan error: " .. tostring(err))
+    end
+
+    if usable_bridge_exists(driver) then
+      remove_stale_manual_placeholder(driver)   -- collapse to a single device
+      break
     end
 
     socket.sleep(5)
+  end
+
+  -- Fallback: nothing auto-discovered → offer the manual/fixed-IP placeholder so the
+  -- user can still enter an IP. Created only when no bridge exists at all.
+  if not any_bridge_exists(driver) then
+    discovery.create_manual_bridge(driver)
   end
 
   log.info_with({ hub_logs = true }, "[Discovery] Discovery session ended")
@@ -166,6 +227,26 @@ function discovery.validate_network_candidate(service)
   return true
 end
 
+-- Match an existing bridge by DNI, serial, OR host. This is what prevents a second
+-- device: a manually configured bridge (different DNI) is found by its host and updated
+-- in place instead of being duplicated by the mDNS path.
+local function find_existing_bridge(driver, dni, serial, host)
+  for _, device in ipairs(driver:get_devices()) do
+    if utils.is_bridge(device) then
+      if device.device_network_id == dni then return device end
+      if serial and serial ~= "" and device:get_field(fields.SERIAL_NUMBER) == serial then
+        return device
+      end
+      if host and host ~= "" then
+        local dev_host = device:get_field(fields.BRIDGE_HOST)
+          or (device.preferences and device.preferences.host)
+        if dev_host == host then return device end
+      end
+    end
+  end
+  return nil
+end
+
 -- Process a confirmed mDNS discovery result
 function discovery.process_mdns_result(driver, service)
   if not discovery.validate_network_candidate(service) then
@@ -182,15 +263,16 @@ function discovery.process_mdns_result(driver, service)
 
   local dni = "fibaro-" .. serial
 
-  -- Check if bridge already exists
-  local existing = driver:get_device_by_dni(dni)
+  -- Reconcile against ALL bridges by DNI, serial, OR host so a re-scan or a
+  -- user-configured manual placeholder is updated in place (never duplicated).
+  local existing = find_existing_bridge(driver, dni, serial, service.host)
   if existing then
-    -- Update host/port if changed (IP may have changed via DHCP)
+    existing:set_field(fields.SERIAL_NUMBER, serial, { persist = true })
     existing:set_field(fields.BRIDGE_HOST, service.host, { persist = true })
     existing:set_field(fields.BRIDGE_PORT, service.port, { persist = true })
     existing:set_field(fields.BRIDGE_SCHEME,
       service.port == 443 and "https" or "http", { persist = true })
-    log.info("[Discovery] Updated existing bridge: " .. dni)
+    log.info("[Discovery] Updated existing bridge: " .. existing.device_network_id)
     return
   end
 
