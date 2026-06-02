@@ -322,7 +322,7 @@ preferences:
   - title: "Hub IP Address"
     name: "host"
     description: "IP address or hostname of the hub"
-    required: true
+    required: false
     preferenceType: "string"
     definition:
       stringType: "text"
@@ -338,14 +338,14 @@ preferences:
       maximum: 65535
   - title: "Username"
     name: "username"
-    required: true
+    required: false
     preferenceType: "string"
     definition:
       stringType: "text"
       default: ""
   - title: "Password"
     name: "password"
-    required: true
+    required: false
     preferenceType: "string"
     definition:
       stringType: "password"

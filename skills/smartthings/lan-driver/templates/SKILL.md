@@ -28,6 +28,14 @@ Generated LAN bridge drivers must satisfy these rules before they are considered
 9. Pass capability handlers into the `Driver(...)` constructor as `capability_handlers = commands.capability_handlers`. Do not generate `driver:register_capability_handler(...)`; that method is not available in the Edge runtime.
 10. Do not generate `require "cosock.http"` as the default REST client. Use packaged `lunchbox.rest` or raw `cosock.socket` / `cosock.ssl`; if `lunchbox.rest` is required, include `src/lunchbox/rest.lua` and `src/lunchbox/util.lua`.
 11. Include a final validation checklist in the generated output: package with SmartThings CLI; **confirm no `.lua` exists outside `src/`** (`find . -name '*.lua' -not -path './src/*'` must return nothing); compare mapper/`profile=` names to profile YAML names; and confirm startup/discovery logs on the hub.
+12. **Lua local-function ordering in `src/vendor/sync.lua`.** Define every `local function` helper **before** any `function sync.XXX` that calls it. Lua resolves names lexically at compile time: a public function defined before a `local function` compiles that name as a global lookup (`_ENV["name"]`), which is `nil` at runtime. The error is caught by the `pcall` wrapper in the lifecycle handler, so the driver stays alive but **sync fails silently — no child devices are ever created.** Fix: order helpers first, public functions last. Also, if a helper is exported as `sync.prime_cursor`, always call it as `sync.prime_cursor(...)` — a bare `prime_cursor(...)` is a different (global) lookup that also resolves to `nil`.
+13. **Do not use variables before they are defined, and do not reference the driver variable before the `Driver(...)` constructor has completed.** A driver-level datastore cache like `driver.datastore.pending_bridge_data = {}` must be initialized *after* `local my_driver = Driver(...)` (e.g. using `my_driver.datastore...`). Accessing it before construction causes an instant nil index crash during startup.
+14. **Do not use global variables across files (e.g. `_G.cosock = cosock`).** Handlers and sub-modules must import their dependencies locally (`local cosock = require "cosock"`) instead of relying on globals defined in `init.lua`.
+15. **Use correct parent/child checks.** A device is a bridge if it has no parent assigned child key (`device.parent_assigned_child_key == nil`). Do not rely on `parent_device_id == nil` as it can behave inconsistently in the runtime. Ensure that preference schemas for host/IP address are marked `required: false` so that the bridge placeholder can be created during discovery without settings.
+16. **Ensure `require "log"` is imported before any logs are printed.** `local log = require "log"` must be the absolute first executable line in `init.lua`, and no logging calls can be made before it.
+17. **Always call `driver:run()` at the very end of `src/init.lua`.** The SmartThings Edge runtime requires the event loop to be started by calling `:run()` on the driver instance (e.g., `my_driver:run()`). Leaving this out causes the driver to immediately exit or do nothing upon loading, which prevents discovery and all handlers from executing.
+18. **Scheme must never reach the URL builder empty — and beware the empty-string-is-truthy trap.** In Lua `""` is **truthy**, so `value or "http"` does NOT replace an empty string (only `nil`/`false`). When defaulting a possibly-empty config value (especially `scheme`), check `== ""` explicitly: `if not scheme or scheme == "" then scheme = "http" end`. An empty scheme makes the API client build `"://host:port"`, which the URL parser cannot match and silently rewrites the host to **`localhost`** — so every request hits the hub itself and the device "cannot connect." Also give the **bridge profile a `scheme` (http/https) preference** so the value is user-selectable and never empty; default it to `http`.
+19. **Use idempotent, NON-persisted init.** Any "already initialized" guard in `device_init` must use `{ persist = false }` (session-only). `init` runs on every boot to (re)start poll timers; a persisted guard makes it return early after a hub reboot and **silently stops state sync**. Make timer setup idempotent (`cancel_timer` then `start_timer`) so re-running init is always safe.
 
 ---
 
@@ -122,7 +130,8 @@ end
 -- Lifecycle Handlers
 local function device_added(driver, device)
   device_log(device, "Added to SmartThings")
-  if device.parent_device_id == nil then
+  -- Bridge = no parent_assigned_child_key (Rule 15). Do NOT use parent_device_id == nil.
+  if device.parent_assigned_child_key == nil then
     -- Parent Bridge
     device:set_field(fields.IS_BRIDGE, true, {persist = true})
   end
@@ -130,7 +139,7 @@ end
 
 local function device_init(driver, device)
   device_log(device, "Initializing device")
-  if device.parent_device_id == nil then
+  if device.parent_assigned_child_key == nil then
     -- Rebuild the API client
     local ip = device.preferences.ipAddress or ""
     local port = device.preferences.port or 80
@@ -271,7 +280,7 @@ local MANUAL_BRIDGE_DNI = "my-vendor-bridge-manual"
 
 local function bridge_exists(driver, dni)
   for _, device in ipairs(driver:get_devices()) do
-    if device.device_network_id == dni and device.parent_device_id == nil then
+    if device.device_network_id == dni and device.parent_assigned_child_key == nil then
       return true
     end
   end
@@ -304,7 +313,7 @@ end
 
 local function any_bridge_exists(driver)
   for _, device in ipairs(driver:get_devices()) do
-    if device.parent_device_id == nil then return true end
+    if device.parent_assigned_child_key == nil then return true end
   end
   return false
 end
@@ -313,7 +322,7 @@ end
 -- user has entered a host. A bare placeholder does not count, so the scan keeps looking.
 local function usable_bridge_exists(driver)
   for _, device in ipairs(driver:get_devices()) do
-    if device.parent_device_id == nil then
+    if device.parent_assigned_child_key == nil then
       if device.device_network_id ~= MANUAL_BRIDGE_DNI then return true end
       local host = device:get_field("bridge_host")
         or (device.preferences and device.preferences.host)
@@ -515,7 +524,7 @@ preferences:
   - name: ipAddress
     title: "Bridge IP Address"
     description: "IPv4 Address of the Vendor Bridge"
-    required: true
+    required: false
     preferenceType: string
     definition:
       stringType: text
@@ -523,7 +532,7 @@ preferences:
   - name: port
     title: "Port Number"
     description: "REST API Port Number"
-    required: true
+    required: false
     preferenceType: integer
     definition:
       minimum: 1

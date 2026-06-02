@@ -80,14 +80,15 @@ Called **exactly once** when the device is first created (either via discovery o
 local function device_added(driver, device)
   log.info(string.format("[%s] Device added", device.label))
   
-  -- Check if it is the parent bridge or a child device
-  if device.parent_device_id == nil then
+  -- Check if it is the parent bridge or a child device.
+  -- A bridge has NO parent_assigned_child_key. Do NOT test parent_device_id == nil —
+  -- it can behave inconsistently in the Edge runtime (see Rule 15).
+  if device.parent_assigned_child_key == nil then
     -- It is the parent/bridge device
     device:set_field("is_bridge", true, {persist = true})
-    device:emit_event(capabilities.switch.switch.off())
   else
     -- It is a child device
-    log.info(string.format("[%s] Child device added. Parent: %s", device.label, device.parent_device_id))
+    log.info(string.format("[%s] Child device added. Key: %s", device.label, device.parent_assigned_child_key))
   end
 end
 ```
@@ -249,3 +250,11 @@ end
 - **Avoid heavy computation in init**: The SmartThings Edge runtime kills drivers that block the main loop for more than a few seconds. Do heavy sync work inside a spawned `cosock` coroutine or spread it using timers.
 - **Timer Management**: Always store timer references in the device fields: `device:set_field("my_timer", timer)`. Cancel the timer explicitly on `removed` or before creating a new timer.
 - **Handling infoChanged Loops**: SmartThings can occasionally fire `infoChanged` repeatedly on startup. Ensure you compare the values inside the args to see if a change actually occurred before restarting connection pools.
+- **Double-Initialization Guard (must be SESSION-ONLY, `persist = false`)**: A guard prevents duplicate init **within one boot** (e.g. `added` then `init`). It must **NOT be persisted**. `device_init` is meant to run on *every* driver start — that is where you (re)start the poll timer and rebuild non-persisted runtime state. If the guard is persisted (`persist = true`), then after a **hub reboot or driver update** `init` sees the stored flag, returns early, and **never restarts the poll timer — state sync silently dies** until the user changes a setting or re-adds the device. Use `persist = false`, and make timer setup idempotent (`cancel_*_timer()` then `start_*_timer()`) so re-running init is always safe:
+  ```lua
+  if device:get_field(fields.INIT) then
+    log.info("Device already initialized this session, skipping init")
+    return
+  end
+  device:set_field(fields.INIT, true, { persist = false })  -- session-only; resets on reboot so init runs again
+  ```

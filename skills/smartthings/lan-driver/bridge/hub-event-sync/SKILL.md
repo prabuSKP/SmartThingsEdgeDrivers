@@ -34,6 +34,31 @@ State sync ensures SmartThings always reflects the current state of devices on t
 └─────────────────────────────────────────────────────┘
 ```
 
+## 0. Required Function Ordering in `src/vendor/sync.lua`
+
+> **Critical Lua scoping rule.** Lua resolves names lexically at compile time. A `local function`
+> is only visible from its declaration onwards — any `function sync.XXX` defined earlier in the
+> file compiles references to that helper as a global lookup (`_ENV["name"]`), which returns `nil`
+> at runtime. The `pcall` wrapper in the lifecycle handler catches the crash, so **the driver
+> stays alive but sync fails silently — no child devices are ever created.**
+>
+> **Fix: always define local helper functions BEFORE the public `sync.XXX` functions that call
+> them.** The required order in the generated file is:
+>
+> 1. `local` helper functions (emit_child_state, ensure_child_device, enqueue_child_create,
+>    api_for_bridge, fetch_rooms, child_devices_for_bridge, delete_child, build_metadata, etc.)
+> 2. `function sync.drain_create_queue` (depends on enqueue_child_create)
+> 3. `function sync.execute_child_action` (standalone)
+> 4. `function sync.refresh_child` (calls emit_child_state, api_for_bridge)
+> 5. `function sync.poll_bridge` (calls sync.sync_bridge_inventory, emit_child_state,
+>    sync.drain_create_queue)
+> 6. `function sync.sync_bridge_inventory` (calls ensure_child_device,
+>    prime_refresh_states_cursor, sync.drain_create_queue)
+> 7. Timer helpers: `sync.cancel_bridge_timer`, `sync.start_poll_timer`
+>
+> Also: if a helper is exported as `sync.prime_cursor`, always call it as `sync.prime_cursor(...)`
+> — a bare `prime_cursor(...)` is a different (global) lookup that also resolves to `nil`.
+
 ## 1. Full Inventory Sync
 
 Runs on first boot, bridge refresh, and when incremental polling detects unknown devices.
@@ -461,6 +486,14 @@ Call `sync.drain_create_queue(driver, MAX_CREATES_PER_INVENTORY)` at the end of 
 sync, and `sync.drain_create_queue(driver, MAX_CREATES_PER_POLL)` at the top of every
 poll tick. Mark each device `seen` **before** enqueuing so stale-cleanup never deletes a
 device that is only waiting in the queue.
+
+> **Large hubs (100s of devices): track in-flight creates.** `try_create_device` is async —
+> the child may not appear in `driver:get_devices()` for several seconds. Without a guard, the
+> next poll re-enqueues and re-submits it. Keep a `driver.datastore.inflight_creates` map keyed
+> by `bridge_dni .. "|" .. child_key`: set it to `os.time()` right after a successful
+> `try_create_device`, skip enqueuing any key already in-flight, and clear the entry once the
+> child shows up in `child_devices_for_bridge`. This (alongside the queue's own de-dup) prevents
+> duplicate child devices during the initial bulk create on a busy hub.
 
 ## 9. Detecting Late-Added / Removed Devices
 
