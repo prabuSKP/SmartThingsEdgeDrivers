@@ -86,6 +86,24 @@ local function build_base_url(config)
   return string.format("%s://%s:%d", config.scheme or "http", config.host, port)
 end
 
+-- Bundled, pinned Fibaro/HC3 server certificate. Relative path is resolved from the
+-- driver's src/ working directory at runtime (same mechanism as SmartThings' own jbl
+-- driver). To target a real HC3, replace src/fibaro_server.crt with that hub's cert
+-- (the self-signed leaf, or the issuing CA if the cert is chained) — no code change.
+local FIBARO_CAFILE = "./fibaro_server.crt"
+
+-- Build the TLS config for an HTTPS Fibaro endpoint.
+--  * "peer" (default): validate the server cert against the bundled pinned cert (cafile).
+--    Defeats man-in-the-middle. Fails on a wrong/expired/non-matching cert (by design).
+--  * "none": encrypt only, do NOT validate (legacy/fallback for hubs whose cert is not
+--    bundled or is expired). Selected via the bridge "TLS Verify" preference.
+local function https_ssl_config(tls_verify)
+  if tostring(tls_verify or "peer"):lower() == "none" then
+    return { mode = "client", protocol = "any", verify = "none", options = "all" }
+  end
+  return { mode = "client", protocol = "any", verify = "peer", options = "all", cafile = FIBARO_CAFILE }
+end
+
 function fibaro_api.new(config, label)
   local headers = copy_headers(DEFAULT_HEADERS)
   if (config.username or "") ~= "" or (config.password or "") ~= "" then
@@ -94,15 +112,16 @@ function fibaro_api.new(config, label)
   end
   headers["X-Fibaro-Version"] = "2"
 
-  local socket_builder = utils.labeled_socket_builder(
-    label or "Fibaro HC",
-    config.scheme == "https" and {
-      mode = "client",
-      protocol = "any",
-      verify = "none",
-      options = "all",
-    } or nil
-  )
+  local ssl_config = nil
+  if config.scheme == "https" then
+    ssl_config = https_ssl_config(config.tls_verify)
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] HTTPS transport: verify=%s%s",
+      tostring(ssl_config.verify),
+      ssl_config.cafile and (" cafile=" .. ssl_config.cafile) or ""))
+  end
+
+  local socket_builder = utils.labeled_socket_builder(label or "Fibaro HC", ssl_config)
 
   return setmetatable({
     client = RestClient.new(build_base_url(config), socket_builder),

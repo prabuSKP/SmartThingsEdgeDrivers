@@ -86,6 +86,33 @@ local function connect_secure_socket(ip, port)
 end
 ```
 
+### Production: validate the server — `verify="peer"` + pinned `cafile` (PREFERRED over bypass)
+
+`verify="none"` encrypts but does **not authenticate** the hub — it accepts *any* certificate, so it is **MITM-vulnerable on the LAN**. Treat it as a logged fallback, not the default. The production pattern (used by SmartThings' own `jbl` driver, and Aqara/DeepSmart) **pins the hub certificate**: `verify="peer"` + a `cafile` cert **bundled in `src/`**.
+
+```lua
+-- module-level, cf. drivers/SmartThings/jbl/src/jbl/api.lua
+local SSL_CONFIG = {
+  mode = "client", protocol = "any", options = "all",
+  verify = "peer",               -- actually validate the server
+  cafile = "./hub_server.crt",   -- bundled cert; "./" resolves from src/ at runtime
+}
+local socket_builder = utils.labeled_socket_builder(label, SSL_CONFIG)
+```
+
+- **Bundle the cert under `src/`** (only `src/` is packaged); the relative `./` path resolves from the driver's `src/` working dir — proven by shipping drivers incl. SmartThings' own `jbl`.
+- **Obtain it** — first inspect the chain, then extract:
+  ```bash
+  openssl s_client -connect <hub-ip>:443 -showcerts </dev/null 2>/dev/null | grep -E "s:|i:"
+  openssl s_client -connect <hub-ip>:443 -showcerts </dev/null 2>/dev/null | openssl x509 -outform PEM > hub_server.crt
+  ```
+  If `s:`==`i:` (self-signed leaf) bundle **that leaf** — openssl trusts a self-signed cert that is present in the `cafile`. If there is a separate issuer **CA**, bundle the **CA** (one CA validates every device that vendor signs).
+- **Hostname/IP:** `verify="peer"`+`cafile` validates the **chain**, not the hostname — so connecting by IP while the cert CN is a hostname is fine.
+- **Per-device vs shared-CA:** a pinned self-signed leaf validates only that one hub (replace the file per deployment); a shared vendor CA validates all that vendor's hubs.
+- **Expiry:** `verify="peer"` enforces validity dates (an expired hub cert is rejected) — expose a `tlsVerify` (peer/none) **preference** so the user can fall back, with a clear log message. Default to `peer`.
+
+**TOFU (Trust On First Use)** alternative for per-device certs without bundling: on first connect capture the server cert fingerprint, persist it in `driver.datastore`, and verify it matches on every reconnect.
+
 ---
 
 ## 2. Authentication Implementations

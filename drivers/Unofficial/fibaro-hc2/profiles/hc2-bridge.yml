@@ -17,6 +17,16 @@ preferences:
       minLength: 0
       maxLength: 5
       default: ""
+  - name: tlsVerify
+    title: TLS Verify
+    description: "HTTPS only. peer = validate the hub's certificate against the bundled cert (default, recommended). none = encrypt only, no validation (use if the hub cert is not bundled or is expired)."
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 5
+      default: "peer"
   - name: host
     title: Fibaro Host
     description: Auto-populated by mDNS discovery. Leave empty for discovered bridges. Set manually only for HC2 or to override the discovered address.

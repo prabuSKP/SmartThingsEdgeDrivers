@@ -55,6 +55,7 @@ For Add device discovery:
 - Prefer `st.mdns` for HC3-style flows, and validate candidates using service name, TXT fields such as `platform` / `serialNumber`, or `/api/settings/info`.
 - If auto discovery is requested, generate the `st.mdns` scan and Fibaro candidate normalization code; do not generate only a sleeping placeholder loop.
 - Cache discovered host, port, scheme, serial, and platform before `try_create_device()`, then persist them during bridge lifecycle init.
+- **HTTPS / TLS (HC3 on port 443).** HC3 serves the local API over HTTPS/443 with a **self-signed** certificate (HC2 is HTTP-only). Support both via the `scheme` preference (default 80 for http, 443 for https). For HTTPS, **validate the server, do not blindly bypass**: use `verify="peer"` with a **pinned cert bundled at `src/fibaro_server.crt`** and `cafile="./fibaro_server.crt"` (the SmartThings `jbl`-driver pattern), plus a `tlsVerify` (peer/none) preference defaulting to `peer` for fallback. HC3 certs are typically per-device self-signed leaves — bundle that hub's leaf (replace the file per deployment) or, if a real Fibaro issuing CA exists, bundle the CA to cover all HC3s. See `smartthings/lan-driver/bridge/secure-transport` → "Production: validate the server".
 
 ### B. Device Discovery & Inventory Sync
 To fetch all devices paired to the Fibaro hub:

@@ -126,10 +126,15 @@ local function get_bridge_endpoint_config(bridge)
     return nil, "bridge host unavailable"
   end
 
+  -- TLS server validation mode for HTTPS: "peer" (validate against bundled pinned
+  -- cert, default) or "none" (encrypt-only fallback). Only relevant when scheme=https.
+  local tls_verify = get_pref_override(prefs.tlsVerify) or "peer"
+
   return {
     scheme = scheme,
     host = host,
     port = port,
+    tls_verify = tls_verify,
   }, nil
 end
 
@@ -178,6 +183,7 @@ local function get_bridge_config(bridge, opts)
     scheme = endpoint.scheme,
     host = endpoint.host,
     port = endpoint.port,
+    tls_verify = endpoint.tls_verify,
     username = auth and auth.username or "",
     password = auth and auth.password or "",
   }
