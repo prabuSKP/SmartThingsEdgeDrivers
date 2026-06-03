@@ -15,13 +15,13 @@ local MDNS_DOMAIN = "local"
 local MDNS_SERVICE_TYPE = "_http._tcp"
 local FIND_FIBARO_URL = "http://find.fibaro.com/api/find/devices"
 local FIND_FIBARO_TIMEOUT = 10
-local DEFAULT_HARDCODED_IP = "192.168.0.126"
+local DEFAULT_HARDCODED_IP = "192.168.68.122"
 local DEFAULT_PORT = 80
 
 -- Ping hosts
 local PING_HOSTS = {
-  "192.168.0.126",
-  "192.168.0.123",
+  "192.168.68.122",
+  "192.168.68.122",
   "hc3-00033787.local"
 }
 
@@ -427,11 +427,11 @@ function discovery_provider.discover_with_fallback(driver, options)
   end
   
   -- Tier 1: mDNS
-  -- devices, _ = discovery_provider.discover_via_mdns(driver)
-  -- if #devices > 0 then
-  --  log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via mDNS: %d devices", #devices))
-  --  return devices
-  -- end
+  devices, _ = discovery_provider.discover_via_mdns(driver)
+  if #devices > 0 then
+   log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via mDNS: %d devices", #devices))
+   return devices
+  end
   
   -- Tier 2: find.fibaro.com
   -- log.info_with({hub_logs = true}, "[Fibaro] mDNS found no devices, falling back to find.fibaro.com")
@@ -452,7 +452,7 @@ function discovery_provider.discover_with_fallback(driver, options)
   
   -- Tier 4: Hardcoded IP - 2
    log.info_with({hub_logs = true}, "[Fibaro] No devices with hardcoded ip - 1, falling back to hardcoded IP 2")
-   local hardcoded_ip_2 = "192.168.0.123"
+   local hardcoded_ip_2 = "192.168.68.122"
    devices, _ = discovery_provider.discover_via_hardcoded(driver, hardcoded_ip_2)
    if #devices > 0 then
     log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Using hardcoded IP 2: %s", hardcoded_ip_2))

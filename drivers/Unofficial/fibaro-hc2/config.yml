@@ -13,4 +13,4 @@ preferences:
     preferenceType: "string"
     definition:
       stringType: "text"
-      default: "192.168.0.126"
+      default: "192.168.68.122"

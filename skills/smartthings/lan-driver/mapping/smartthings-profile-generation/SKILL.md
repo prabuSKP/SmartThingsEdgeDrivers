@@ -122,7 +122,7 @@ components:
       - id: refresh
         version: 1
     categories:
-      - name: TemperatureSensor
+      - name: TempSensor
 ```
 
 ### Humidity Sensor
@@ -167,7 +167,7 @@ components:
       - id: refresh
         version: 1
     categories:
-      - name: WaterSensor
+      - name: LeakSensor
 ```
 
 ### Smoke Detector
@@ -199,7 +199,7 @@ components:
       - id: refresh
         version: 1
     categories:
-      - name: BlindController
+      - name: Blind
 ```
 
 ### Generic Sensor (Catch-all)
@@ -317,7 +317,8 @@ components:
       - id: refresh
         version: 1
     categories:
-      - name: Bridge
+      - name: Bridges
+```
 preferences:
   - title: "Hub IP Address"
     name: "host"
@@ -400,16 +401,16 @@ Use one naming convention throughout a generated driver. Replace `vendor` with t
 | `Switch` | Toggle switch |
 | `Light` | Light bulb |
 | `SmartPlug` | Smart outlet |
-| `BlindController` | Window blind |
+| `Blind` | Window blind |
 | `ContactSensor` | Door sensor |
 | `MotionSensor` | Motion detector |
-| `TemperatureSensor` | Thermometer |
+| `TempSensor` | Thermometer |
 | `HumiditySensor` | Water droplet |
 | `LightSensor` | Sun icon |
-| `WaterSensor` | Water leak |
+| `LeakSensor` | Water leak |
 | `SmokeDetector` | Smoke alarm |
-| `Bridge` | Network bridge |
+| `Bridges` | Network bridge |
 | `GenericSensor` | Generic sensor |
 | `Thermostat` | Climate control |
 | `Fan` | Fan blade |
-| `Lock` | Lock icon |
+| `SmartLock` | Lock icon |

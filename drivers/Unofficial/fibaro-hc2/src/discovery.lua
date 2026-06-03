@@ -207,7 +207,7 @@ function discovery.discover(driver, _, should_continue)
   
   while should_continue() do
     local devices = discovery_provider.discover_with_fallback(driver, {
-      hardcoded_ip = "192.168.0.126"  -- Can be made configurable via preferences
+      hardcoded_ip = "192.168.68.122"  -- Can be made configurable via preferences
     })
     
     log.info_with({hub_logs = true}, string.format("[Fibaro] Processing %d discovered devices", #devices))
