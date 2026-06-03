@@ -1,0 +1,16 @@
+name: fibaro-blind-metered
+components:
+  - id: main
+    capabilities:
+      - id: windowShade
+        version: 1
+      - id: windowShadeLevel
+        version: 1
+      - id: powerMeter
+        version: 1
+      - id: energyMeter
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: Blinds

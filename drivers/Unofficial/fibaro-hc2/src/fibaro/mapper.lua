@@ -437,13 +437,28 @@ function mapper.map_device(device, rooms, parent_is_multichannel)
   -- Apply mapping rules in order
   for _, rule in ipairs(MAPPING_RULES) do
     if rule.match(match_context) then
+      -- Energy/power metering: Fibaro relays and dimmers that meter consumption
+      -- expose the 'power' and/or 'energy' interface (and carry properties.power /
+      -- properties.energy). Surface that via a "-metered" profile variant
+      -- (switch/dimmer + powerMeter + energyMeter) instead of discarding the data.
+      -- Detection is interface-driven, matching the rest of the mapper.
+      local profile = rule.profile
+      local metered = false
+      if (rule.kind == "switch" or rule.kind == "dimmer" or rule.kind == "blind")
+        and (has_interface(interfaces, "energy") or has_interface(interfaces, "power")) then
+        profile = rule.profile .. "-metered"
+        metered = true
+      end
+
       log.info_with({hub_logs = true}, string.format(
-        "[Fibaro] Device %s mapped as %s", tostring(device.id), rule.reason))
+        "[Fibaro] Device %s mapped as %s%s", tostring(device.id), rule.reason,
+        metered and " [metered]" or ""))
       return {
         id = device.id,
         key = utils.child_key_for_id(device.id),
         kind = rule.kind,
-        profile = rule.profile,
+        profile = profile,
+        metered = metered,
         label = label,
         type = device_type,
         parent_id = parent_id,

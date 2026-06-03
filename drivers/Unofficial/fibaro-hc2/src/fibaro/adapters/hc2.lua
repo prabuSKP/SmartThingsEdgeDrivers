@@ -91,6 +91,8 @@ function hc2.normalize_device(raw_device)
     interfaces = interfaces,
     value = value,
     level = utils.safe_tonumber(value),
+    power = utils.safe_tonumber(props.power),
+    energy = utils.safe_tonumber(props.energy),
     dead = dead == true,
     visible = raw_device.visible ~= false,
     enabled = raw_device.enabled ~= false,

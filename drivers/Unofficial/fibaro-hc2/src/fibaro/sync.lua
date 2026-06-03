@@ -293,9 +293,23 @@ local function find_bridge_by_dni(driver, dni)
   return nil
 end
 
+-- driver.datastore returns a SNAPSHOT/proxy: `table.insert` and `#` on the value it returns
+-- do NOT persist (and `#` reports the committed length, so it reads 0 right after an insert).
+-- Read a materialized plain-array copy, mutate that, then write the whole table back with
+-- save_queue (a top-level datastore assignment) for changes to stick.
 local function create_queue(driver)
-  driver.datastore.pending_create_queue = driver.datastore.pending_create_queue or {}
-  return driver.datastore.pending_create_queue
+  local stored = driver.datastore.pending_create_queue
+  local queue = {}
+  if type(stored) == "table" then
+    for _, entry in ipairs(stored) do
+      queue[#queue + 1] = entry
+    end
+  end
+  return queue
+end
+
+local function save_queue(driver, queue)
+  driver.datastore.pending_create_queue = queue
 end
 
 local function inflight_creates(driver)
@@ -351,6 +365,10 @@ local function enqueue_child_create(driver, bridge, mapped)
     attempts = 0,
     next_attempt_at = 0,
   })
+
+  -- Persist the mutated queue. driver.datastore does not see in-place table.insert; the
+  -- whole table must be reassigned (top-level set) or the enqueue is silently lost.
+  save_queue(driver, queue)
 
   log.info_with({hub_logs = true}, string.format(
     "[Fibaro] Queued child create: key=%s label='%s' (queue size %d)",
@@ -449,6 +467,22 @@ local function emit_child_state(device, normalized_device, kind)
   elseif kind == "motion" then
     local event = utils.value_is_truthy(value) and capabilities.motionSensor.motion.active() or capabilities.motionSensor.motion.inactive()
     device:emit_event(event)
+  end
+
+  -- Energy/power metering. Metered Fibaro relays/dimmers/roller-shutters expose
+  -- properties.power (W) and properties.energy (kWh); their child uses the "-metered"
+  -- profile variant which carries powerMeter + energyMeter. Non-metered devices
+  -- normalize these to nil, so nothing is emitted and a plain profile is never sent
+  -- metering events.
+  if kind == "switch" or kind == "dimmer" or kind == "blind" then
+    local power = utils.safe_tonumber(normalized_device.power)
+    if power ~= nil then
+      device:emit_event(capabilities.powerMeter.power({ value = power, unit = "W" }))
+    end
+    local energy = utils.safe_tonumber(normalized_device.energy)
+    if energy ~= nil then
+      device:emit_event(capabilities.energyMeter.energy({ value = energy, unit = "kWh" }))
+    end
   end
   -- "default" and "generic-sensor" kinds: no specific state emission
 end

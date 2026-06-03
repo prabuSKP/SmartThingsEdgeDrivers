@@ -134,6 +134,8 @@ function hc3.normalize_device(raw_device)
     interfaces = interfaces,
     value = value,
     level = level,
+    power = utils.safe_tonumber(props.power),
+    energy = utils.safe_tonumber(props.energy),
     dead = props.dead == true,
     visible = raw_device.visible ~= false,
     enabled = raw_device.enabled ~= false,

@@ -261,6 +261,16 @@ device:emit_event(capabilities.battery.battery(85))
 
 ### Energy & Power
 
+> **Metered-variant pattern (production).** When a device *optionally* meters consumption
+> (many switches/relays/dimmers/plugs do), surface it via a **separate `-metered` profile
+> variant** (e.g. `switch` vs `switch-metered` that adds `powerMeter` + `energyMeter`), and
+> select the variant from the **device's reported capability/interface** (e.g. a `power`/`energy`
+> interface flag), NOT unconditionally. Adding `powerMeter`/`energyMeter` to *all* switches makes
+> non-metering devices show misleading empty `0 W` / `0 kWh` tiles. Normalize the meter values in
+> the adapter and emit them only when present; non-metered devices normalize them to `nil` and
+> stay on the plain profile. (Fibaro example: `fibaro-switch-metered` selected by the `power`/
+> `energy` interface — see the `fibaro` skill.)
+
 ```lua
 device:emit_event(capabilities.energyMeter.energy({
   value = 12.5,

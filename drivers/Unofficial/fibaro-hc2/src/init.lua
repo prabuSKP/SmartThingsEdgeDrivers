@@ -21,6 +21,8 @@ local fibaro_hc2 = Driver("fibaro", {
     capabilities.refresh,
     capabilities.switch,
     capabilities.switchLevel,
+    capabilities.powerMeter,
+    capabilities.energyMeter,
     capabilities.contactSensor,
     capabilities.motionSensor,
     capabilities.windowShade,

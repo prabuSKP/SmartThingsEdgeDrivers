@@ -29,8 +29,11 @@ When generating a Fibaro bridge Edge driver, combine this vendor skill with the 
 | Kind | Profile name |
 |---|---|
 | Switch | `fibaro-switch` |
+| Switch (metered — exposes `power`/`energy` interface) | `fibaro-switch-metered` |
 | Dimmer | `fibaro-dimmer` |
+| Dimmer (metered — exposes `power`/`energy` interface) | `fibaro-dimmer-metered` |
 | Blind/window shade | `fibaro-blind` |
+| Blind/shade (metered — exposes `power`/`energy` interface) | `fibaro-blind-metered` |
 | Contact sensor | `fibaro-contact` |
 | Motion sensor | `fibaro-motion` |
 | Temperature sensor | `fibaro-temperature-sensor` |
@@ -41,6 +44,8 @@ When generating a Fibaro bridge Edge driver, combine this vendor skill with the 
 | Generic fallback | `fibaro-default` (full integrations only) |
 
 Every Fibaro mapper rule that returns one of these profile names must have a matching `name:` in `profiles/*.yml` — **and** every generated profile must have a mapper rule that uses it. Do not generate a profile (or a rule) for a kind that is out of the requested scope.
+
+**Energy/power metering (production requirement).** Many Fibaro relays and dimmers meter consumption: they expose the `power` and/or `energy` **interface** and carry `properties.power` (W) and `properties.energy` (kWh). When a device maps to `switch` or `dimmer` **and** `has_interface(interfaces, "energy")` or `has_interface(interfaces, "power")`, emit the **`-metered` profile variant** (`fibaro-switch-metered` / `fibaro-dimmer-metered`, which add `powerMeter` + `energyMeter`) — never discard the metering data. Implement it as a **post-match upgrade** in `mapper.map_device` (after a rule matches, swap `profile = rule.profile .. "-metered"`), so every switch/dimmer rule benefits without duplicating the rule table. Then: (1) the adapter normalizes `power = utils.safe_tonumber(props.power)` / `energy = utils.safe_tonumber(props.energy)`; (2) `emit_child_state` emits `capabilities.powerMeter.power({value, unit="W"})` and `capabilities.energyMeter.energy({value, unit="kWh"})` for the `switch`/`dimmer` kinds; (3) `init.lua` `supported_capabilities` includes `capabilities.powerMeter` and `capabilities.energyMeter`. Plain (non-metered) devices normalize `power`/`energy` to `nil`, so they emit nothing and **stay on the plain profile** — never add metering capabilities to a non-metered switch (it shows misleading empty 0 W / 0 kWh tiles). Detection is **interface-driven**, not name-driven. Roller shutters / `FGR223` curtain controllers are metered too and use **`fibaro-blind-metered`** (windowShade + windowShadeLevel + powerMeter + energyMeter); the same interface-driven post-match upgrade covers the `blind` kind, and `emit_child_state` emits the meters for `blind` as well.
 
 For Add device discovery:
 

@@ -63,6 +63,21 @@ State sync ensures SmartThings always reflects the current state of devices on t
 
 Runs on first boot, bridge refresh, and when incremental polling detects unknown devices.
 
+> **⚠️ Mapping a device does NOT create it. The sync MUST create the child.** `mapper.map_device`
+> only *classifies* a device (returns `kind`/`profile`/`key`); it never touches the platform. For
+> **every in-scope mapped device** the inventory loop MUST then call
+> `ensure_child_device(driver, bridge, mapped, existing)` (which emits state if the child already
+> exists, else `enqueue_child_create`), and the sync MUST end by draining the queue with
+> `sync.drain_create_queue(driver, MAX_CREATES_PER_INVENTORY)`. The drain is what calls
+> `driver:try_create_device{ type = "EDGE_CHILD", parent_device_id = bridge.id, parent_assigned_child_key = key, profile = mapped.profile, … }`.
+>
+> **A sync that logs `"... mapped as switch/dimmer/…"` but is NOT followed by a `try_create_device`
+> (EDGE_CHILD) is broken — it silently creates zero child devices.** Symptom: the bridge connects,
+> `/api/devices` returns 200, the logs show devices being mapped, yet nothing appears in the app
+> because the mapped result was computed and discarded. Verify generated/edited sync code by
+> confirming each mapped device reaches `ensure_child_device` and that `drain_create_queue` runs at
+> the end of `sync_bridge_inventory` (and at the top of each poll). Never "map and move on."
+
 ```lua
 function sync.sync_bridge_inventory(driver, bridge)
   -- 1. Validate bridge has credentials and endpoint config
@@ -435,6 +450,25 @@ limit if you call `try_create_device` for every device in one pass. **Never crea
 children inline inside the inventory loop.** Instead, enqueue them and drain the queue
 in paced batches across poll ticks, retrying failures with backoff. The queue lives in
 `driver.datastore` so nothing is lost across a hub reboot.
+
+> **⚠️ `driver.datastore` is copy-in / copy-out — you MUST write the queue back.** Reading
+> `driver.datastore.pending_create_queue` returns a **snapshot**: `table.insert(queue, x)` on it
+> does **not** persist, and `#queue` reports the *committed* length (so it prints **`0` right
+> after an insert**). The enqueue function must therefore read a **materialized copy**, mutate
+> it, and **reassign the whole table back**:
+> ```lua
+> local function enqueue_child_create(driver, bridge, mapped)
+>   local queue = {}
+>   for _, e in ipairs(driver.datastore.pending_create_queue or {}) do queue[#queue+1] = e end
+>   -- ... dedup + table.insert(queue, { ... }) ...
+>   driver.datastore.pending_create_queue = queue      -- REQUIRED: persist (top-level set)
+> end
+> ```
+> `drain_create_queue` already reassigns `driver.datastore.pending_create_queue = remaining`, but
+> **enqueue must do the same** or the item is silently lost and **no child is ever created** —
+> the bridge connects, `/api/devices` returns 200, the log says "Queued child create … (queue
+> size 0)", and `try_create_device` never fires. (Same rule for `inflight_creates` and any other
+> datastore-backed table.)
 
 ```lua
 -- Tunables
