@@ -1,6 +1,6 @@
 ---
 name: cli-control
-description: Direct SmartThings hub control via the official SmartThings CLI. List devices, read device status, and execute capability commands without going through Home Assistant. Use when the user asks to control a SmartThings device, check device state, run a scene, or when "smartthings" / "ST" is mentioned.
+description: Direct SmartThings hub control via the official SmartThings CLI. List devices and hubs, read device status, execute capability commands, and package/assign/install custom Edge drivers onto a hub (list hubs & channels, deploy, verify). Use when the user asks to control a SmartThings device, check device state, run a scene, package/deploy/install an Edge driver to a hub, list hubs or channels, or when "smartthings" / "ST" is mentioned.
 homepage: https://github.com/SmartThingsCommunity/smartthings-cli
 metadata: {"clawdbot": {"emoji": "🏠", "requires": {"bins": ["smartthings"]}}}
 ---
@@ -132,6 +132,98 @@ When the user says something like "turn off the living room light":
    smartthings devices:commands <id> switch:switch:off
    ```
 4. Confirm result by re-reading status if the action is consequential (HVAC setpoint, scene execute).
+
+## Edge driver packaging & installation
+
+Build a custom Edge driver (e.g. the Fibaro LAN bridge) and install it onto a hub. This is the complete deploy path — fast commands first, then error recovery at the end.
+
+### Speed rules (read first — these are the slow-downs to avoid)
+
+- **There is no `smartthings hubs` command, and bare `smartthings` is not a command.** Either one prints the full ~200-line help and burns a turn. List hubs from `devices` (below).
+- Always pass `-j`/`--json` and parse with `jq` so each step is non-interactive and machine-readable. Bare commands can drop into interactive pickers that stall the agent.
+- When you already know the hub id and channel id, use the **one-shot** command — don't run the 6-step sequence.
+
+### List hubs and channels (for selection)
+
+```bash
+# Hubs — NO `smartthings hubs`; filter the device list by type HUB
+smartthings devices --json | jq '[.[] | select(.type=="HUB") | {deviceId, label, locationId}]'
+
+# Channels you own
+smartthings edge:channels --json | jq '[.[] | {channelId, name}]'
+
+# Channels a specific hub is already enrolled in
+smartthings edge:channels:enrollments <hub-id> --json
+```
+
+Present these lists and ask the user which **hub** and which **channel** to deploy to before running the install.
+
+### Fast path — one command (package + assign + install)
+
+Once you have the channel id and hub id:
+
+```bash
+smartthings edge:drivers:package <driver-dir> --channel <channel-id> --hub <hub-id>
+```
+
+Builds + uploads, assigns to the channel, and installs on the hub in a single call. To let the CLI prompt interactively for the channel/hub instead of passing ids, use `--install` (implies `--assign`):
+
+```bash
+smartthings edge:drivers:package <driver-dir> --install
+```
+
+### Step-by-step path (when you need each id explicitly, or for recovery)
+
+```bash
+# 1. Package + upload — capture the Driver Id from the output
+smartthings edge:drivers:package <driver-dir> --json
+
+# 2. Pick a channel (or create one if none exists)
+smartthings edge:channels --json | jq '[.[] | {channelId, name}]'
+smartthings edge:channels:create --json <<'EOF'
+{ "name": "Custom Edge Drivers", "description": "Local custom Edge drivers", "termsOfServiceUrl": "https://smartthings.com" }
+EOF
+
+# 3. Assign the driver to the channel
+smartthings edge:channels:assign <driver-id> --channel <channel-id>
+
+# 4. Enroll the hub in the channel (one-time per hub/channel pair)
+smartthings edge:channels:enroll <hub-id> --channel <channel-id>
+
+# 5. Install onto the hub
+smartthings edge:drivers:install <driver-id> --hub <hub-id> --channel <channel-id>
+
+# 6. Verify it is installed and active
+smartthings edge:drivers:installed --hub <hub-id> --json
+```
+
+### After install — updates & logs
+
+Re-running `edge:drivers:package` to the same channel triggers an OTA hot-reload on enrolled hubs (the hub re-runs each device's `init`; see the `ota-analysis` skill). Stream live driver logs by hub IP:
+
+```bash
+smartthings edge:drivers:logcat <driver-id> --hub-address <hub-ip>
+smartthings edge:drivers:logcat --all --hub-address <hub-ip> --log-level info
+```
+
+### Auth check before deploying
+
+If a deploy command errors on auth, confirm the CLI is logged in and which profile is active:
+
+```bash
+smartthings config
+```
+
+The CLI authenticates via `config.yaml` or the browser login flow (see [Auth](#auth) above). Warn the user if no credentials are set.
+
+### Resolving 422 (Unprocessable Entity) on `edge:drivers:package`
+
+A `422` from packaging means API-side validation failed. Common causes and fixes:
+
+- **Invalid profile category** — a `categories:` entry in `profiles/*.yml` uses a non-standard name. Use only verified values (see the `smartthings-profile-generation` skill): `TempSensor` (not `TemperatureSensor`), `LeakSensor` (not `WaterSensor`), `Blind` (not `Blinds`/`BlindController`), `Bridges` (not `Bridge`), `SmartLock` (not `Lock`), `Light` (not `Dimmer`), `GenericSensor` (not `Sensor`/`Other`).
+- **Missing/duplicate profile fields** — the YAML lacks a top-level `name:`, or two components share an `id`. Ensure `name: vendor-profile-name` exists and component ids are unique (`main`, `switch2`, …).
+- **Profile-name mismatch in Lua** — a `src/*.lua` file references a profile that no profile YAML declares (or differs in case). Verify: `grep -rn "profile =" src/` and match each against a `name:` in `profiles/`.
+- **Lua syntax error** — validate locally before packaging: `luac -p src/**/*.lua`.
 
 ## Rate limits
 

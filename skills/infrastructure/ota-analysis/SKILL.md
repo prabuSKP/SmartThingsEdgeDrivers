@@ -59,8 +59,10 @@ Z-Wave OTA utilizes the `FirmwareUpdateMd` (Firmware Update Meta Data) Command C
 Use the SmartThings CLI to check active firmware versions on the hub or connected devices:
 
 ### Get Hub Info
+There is **no `smartthings hubs` command** (it prints the full CLI help). List hubs by filtering the device list, then read the hub's detail:
 ```bash
-smartthings hubs
+smartthings devices --json | jq '[.[] | select(.type=="HUB") | {deviceId, label}]'
+smartthings devices <hub-device-id> --json
 ```
 *Verification*: Check the `firmwareVersion` attribute to confirm the Hub is running the minimum firmware required for your driver features.
 
