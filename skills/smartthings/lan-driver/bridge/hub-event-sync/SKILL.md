@@ -37,24 +37,31 @@ State sync ensures SmartThings always reflects the current state of devices on t
 ## 0. Required Function Ordering in `src/vendor/sync.lua`
 
 > **Critical Lua scoping rule.** Lua resolves names lexically at compile time. A `local function`
-> is only visible from its declaration onwards — any `function sync.XXX` defined earlier in the
-> file compiles references to that helper as a global lookup (`_ENV["name"]`), which returns `nil`
-> at runtime. The `pcall` wrapper in the lifecycle handler catches the crash, so **the driver
-> stays alive but sync fails silently — no child devices are ever created.**
+> is only visible from its declaration onwards — any reference to it that appears **earlier** in the
+> file compiles as a global lookup (`_ENV["name"]`), which returns `nil` at runtime. The `pcall`
+> wrapper in the lifecycle/poll path catches the crash, so **the driver stays alive but sync fails
+> silently — the bridge comes online yet no child devices are ever created** ("hub devices not
+> visible"). This applies **helper-to-helper, not just helpers-before-public**: if helper `A` calls
+> helper `B`, then `B` must be defined **above** `A`, even though both are locals.
 >
-> **Fix: always define local helper functions BEFORE the public `sync.XXX` functions that call
-> them.** The required order in the generated file is:
+> **Fix: topologically order every local helper so each callee is defined above its first caller**,
+> then the public `sync.XXX` functions last. A correct dependency order for the helpers:
 >
-> 1. `local` helper functions (emit_child_state, ensure_child_device, enqueue_child_create,
->    api_for_bridge, fetch_rooms, child_devices_for_bridge, delete_child, build_metadata, etc.)
-> 2. `function sync.drain_create_queue` (depends on enqueue_child_create)
-> 3. `function sync.execute_child_action` (standalone)
-> 4. `function sync.refresh_child` (calls emit_child_state, api_for_bridge)
-> 5. `function sync.poll_bridge` (calls sync.sync_bridge_inventory, emit_child_state,
->    sync.drain_create_queue)
-> 6. `function sync.sync_bridge_inventory` (calls ensure_child_device,
->    prime_refresh_states_cursor, sync.drain_create_queue)
-> 7. Timer helpers: `sync.cancel_bridge_timer`, `sync.start_poll_timer`
+> 1. Leaf helpers with no intra-file deps: `find_bridge_by_dni`, `child_exists`, `api_for_bridge`,
+>    `fetch_rooms`, `prime_refresh_states_cursor`, `bootstrap_bridge`, `emit_child_state`,
+>    `cache_child_metadata`, `build_child_metadata`, `delete_child`, `bridge_has_inventory_config`
+> 2. **`enqueue_child_create`** — must come **before** `ensure_child_device` (which calls it)
+> 3. **`ensure_child_device`** — calls `emit_child_state` (1) and `enqueue_child_create` (2)
+> 4. Public functions last: `sync.drain_create_queue`, `sync.execute_child_action`,
+>    `sync.refresh_child`, `sync.poll_bridge`, `sync.sync_bridge_inventory`,
+>    `sync.cancel_bridge_timer`, `sync.start_poll_timer`
+>
+> ⚠️ The #1 real-world miss is putting `ensure_child_device` above `enqueue_child_create` — both are
+> locals, both sit above the public functions, but `ensure_child_device` calls `enqueue_child_create`
+> a few lines *below* it → nil-global crash on the first child create. `luac -p` will **not** catch
+> this (valid syntax). **Verify with the `edge-validation` Stage 1b runtime-nil lint**
+> (`diagnostics/edge-validation/scripts/check-lua-nils.js`) before handover — a header comment
+> claiming "ordered correctly" is not proof.
 >
 > Also: if a helper is exported as `sync.prime_cursor`, always call it as `sync.prime_cursor(...)`
 > — a bare `prime_cursor(...)` is a different (global) lookup that also resolves to `nil`.

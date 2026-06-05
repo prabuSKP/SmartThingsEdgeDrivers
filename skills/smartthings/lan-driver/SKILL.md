@@ -119,6 +119,21 @@ Load the appropriate sub-skill:
 
 Load `smartthings/lan-driver/templates` for complete boilerplate drivers.
 
+### Phase 7: Validation — BLOCKING gate before package / install / handover
+
+**This is a hard precondition, not advice. You MUST run `smartthings/lan-driver/diagnostics/edge-validation`
+and show it passing BEFORE you run `edge:drivers:package`/`:install` or tell the user a driver is ready.**
+The gate runs: compile (`luac -p`/fengari), the runtime-nil lint (`check-lua-nils.js`), the Driver-API
+check (`check-driver-api.js` — incl. the **`:run()` assertion**: `init.lua` must end in `<driver>:run()`,
+never `return <driver>`), the capability-command check (`check-capability-commands.js`), the banned-pattern
+greps (non-Edge libs, hardcoded IPs, `get_device_by_dni`, **`cosock.sleep`**), profile/mapper parity, the
+scope check, and the install test.
+
+**If ANY stage FAILs: STOP, fix it, and re-run the whole gate — do not package, install, or report ready.**
+Nearly every recurring "the bridge won't load / no devices appear" failure (`return driver` instead of
+`:run()`, `cosock.sleep`, `windowShadeLevel.setLevel`, forward-refs, `driver.open`) is caught here. Those
+keep reaching the hub only when this phase is skipped — so it is non-skippable.
+
 ## Project Structure (Reference)
 
 A complete LAN bridge driver follows this structure:

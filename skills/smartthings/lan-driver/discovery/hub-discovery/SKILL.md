@@ -109,10 +109,19 @@ local function any_bridge_exists(driver)
   return false
 end
 
+-- IMPORTANT: the SmartThings Edge `Driver` object has NO `get_device_by_dni` method.
+-- Resolve a device by its device_network_id by iterating the driver's device list.
+local function find_device_by_dni(driver, dni)
+  for _, device in ipairs(driver:get_devices()) do
+    if device.device_network_id == dni then return device end
+  end
+  return nil
+end
+
 -- Once a real hub is discovered, delete a leftover unconfigured manual placeholder so
 -- the hub is represented by exactly one device.
 local function remove_stale_manual_placeholder(driver)
-  local manual = driver:get_device_by_dni(MANUAL_BRIDGE_DNI)
+  local manual = find_device_by_dni(driver, MANUAL_BRIDGE_DNI)
   if manual == nil then return end
   local host = manual:get_field(fields.BRIDGE_HOST)
     or (manual.preferences and manual.preferences.host)
@@ -164,7 +173,7 @@ function discovery.create_manual_bridge(driver)
   log.info_with({ hub_logs = true }, "[Discovery] Creating manual bridge placeholder")
 
   -- Check if already exists
-  local existing = driver:get_device_by_dni(MANUAL_BRIDGE_DNI)
+  local existing = find_device_by_dni(driver, MANUAL_BRIDGE_DNI)
   if existing then
     log.info("[Discovery] Manual bridge already exists, skipping")
     return

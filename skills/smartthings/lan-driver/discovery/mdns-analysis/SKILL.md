@@ -139,6 +139,15 @@ local log = require "log"
 
 local discovery = {}
 
+-- The SmartThings Edge `Driver` object has NO `get_device_by_dni` method. Resolve a
+-- device by its device_network_id by iterating the driver's device list.
+local function find_device_by_dni(driver, dni)
+  for _, device in ipairs(driver:get_devices()) do
+    if device.device_network_id == dni then return device end
+  end
+  return nil
+end
+
 function discovery.discover(driver, opts, should_continue)
   log.info("[Discovery] Starting mDNS scan")
 
@@ -153,7 +162,7 @@ function discovery.discover(driver, opts, should_continue)
       local serial = service.txt and service.txt.serialNumber
       if serial and is_target_device(service) then
         local dni = "fibaro-" .. serial
-        if not driver:get_device_by_dni(dni) then
+        if not find_device_by_dni(driver, dni) then
           create_bridge_device(driver, service, dni)
         end
       end

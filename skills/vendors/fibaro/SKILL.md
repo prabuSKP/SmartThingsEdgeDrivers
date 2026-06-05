@@ -145,6 +145,15 @@ Instead of polling `/api/devices` repeatedly (which is resource intensive), Fiba
 Store the cursor persistently in the parent bridge device's datastore:
 
 ```lua
+-- The SmartThings Edge `Driver` object has NO `get_device_by_dni` method. Resolve a
+-- child by its device_network_id by iterating the driver's device list.
+local function find_device_by_dni(driver, dni)
+  for _, device in ipairs(driver:get_devices()) do
+    if device.device_network_id == dni then return device end
+  end
+  return nil
+end
+
 local function poll_fibaro_changes(driver, bridge_device)
   local client = bridge_device:get_field("api_client")
   
@@ -159,7 +168,7 @@ local function poll_fibaro_changes(driver, bridge_device)
     
     -- 2. Process changes
     for _, change in ipairs(data.changes or {}) do
-      local child_device = driver:get_device_by_dni(tostring(change.id))
+      local child_device = find_device_by_dni(driver, tostring(change.id))
       if child_device then
         -- Update child device status based on changed properties
         sync_properties_to_st(child_device, change.properties)

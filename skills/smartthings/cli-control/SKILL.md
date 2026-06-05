@@ -57,6 +57,37 @@ smartthings locations      # first call triggers login
 
 Confirm config path any time with `smartthings config`.
 
+### Choosing auth at runtime (do this FIRST, before any deploy)
+
+Decide PAT vs. session once, then **thread the choice through every command** (there is **no `SMARTTHINGS_TOKEN` env var**, so a PAT must be passed on each call). Decision rule:
+
+1. **Default to the existing logged-in session** (browser auth) — probe it cheaply; if it works, no token is needed.
+2. **Use a PAT only** when the user supplies one or no session exists.
+3. **Security (preferred for agents):** put the token in `config.yaml` (`token:`) or use the session, rather than inline `--token` — an inline token is visible in the process list (`ps`) and shell history, and PATs expire in 24h.
+
+```bash
+# --- Auth selection: PAT or existing browser/session login ---
+PAT=""        # set ONLY to use PAT auth; leave EMPTY to use the logged-in CLI session (preferred)
+PROFILE=""    # a config.yaml PROFILE NAME (e.g. acceptance/staging/development); empty = default
+              # NOTE: --profile selects a named profile in config.yaml — it is NOT an "environment" flag
+
+# Prefer an existing session: if this succeeds, you are authenticated and need no PAT
+if smartthings locations --json >/dev/null 2>&1; then
+  echo "Using existing CLI session"
+else
+  echo "No session — set PAT, or run 'smartthings locations' once to log in via browser"
+fi
+
+# Build a single prefix and reuse it for EVERY command below
+ST="smartthings"
+[ -n "$PAT" ]     && ST="$ST --token $PAT"        # prefer config.yaml token: over this inline form
+[ -n "$PROFILE" ] && ST="$ST --profile $PROFILE"
+```
+
+Then run all subsequent commands as `$ST <subcommand>` (e.g. `$ST edge:drivers:package …`). The
+device-control examples elsewhere in this skill work the same way — prefix them with `$ST` when you
+need a non-default profile or an explicit PAT.
+
 ## Core commands
 
 ### Devices
@@ -137,73 +168,125 @@ When the user says something like "turn off the living room light":
 
 Build a custom Edge driver (e.g. the Fibaro LAN bridge) and install it onto a hub. This is the complete deploy path — fast commands first, then error recovery at the end.
 
+> **🛑 BLOCKING PRECONDITION — run the `edge-validation` gate and confirm it passes BEFORE the first
+> `edge:drivers:package`.** A clean package/install of a driver that crashes at load (missing `:run()`,
+> `cosock.sleep`, a bad capability command, a forward-ref, `driver.open`) just deploys a broken driver
+> that shows `BACKOFF`/`NODEVICE` on the hub and "the bridge never loads." Packaging is **not** a test.
+> Run the gate first (see `smartthings/lan-driver/diagnostics/edge-validation`):
+> ```bash
+> G=<skills>/smartthings/lan-driver/diagnostics/edge-validation/scripts
+> node "$G/check-lua-nils.js"          $(find src -name '*.lua')   # → clean
+> node "$G/check-driver-api.js"        src/init.lua                # → Driver construction OK
+> node "$G/check-capability-commands.js" $(find src -name '*.lua') # → capability commands OK
+> grep -q ':run()' src/init.lua && echo ":run() OK" || echo "FAIL: init.lua never calls :run()"
+> ```
+> If anything FAILs, fix it and re-run — **do not package/install until the gate is green.**
+
 ### Speed rules (read first — these are the slow-downs to avoid)
 
 - **There is no `smartthings hubs` command, and bare `smartthings` is not a command.** Either one prints the full ~200-line help and burns a turn. List hubs from `devices` (below).
 - Always pass `-j`/`--json` and parse with `jq` so each step is non-interactive and machine-readable. Bare commands can drop into interactive pickers that stall the agent.
-- When you already know the hub id and channel id, use the **one-shot** command — don't run the 6-step sequence.
+- **`edge:drivers:install` MUST be given both `--hub` AND `--channel`** (plus `-j`). A bare `install --hub <id>` opens an interactive *"Select a channel"* picker that an agent cannot answer — it ends in `ExitPromptError: User force closed the prompt`. Same for `assign`/`enroll`: always pass the ids.
+- A **`422`** from `package` is usually a **transient/flaky endpoint** — **retry 2–3× first** (same command, short backoff); the same bytes typically succeed. It is **never auth** (that's `401`/`403`), so never chase tokens or `curl` the API. Only diagnose content if every retry fails (see the 422 section below).
+- Follow the **canonical flow** (package → channel → assign → enroll → install → verify) below. The one-shot `package --channel --hub` is only a shortcut for when the hub is **already enrolled**; do not reach for `--build-only`/`--upload` for a normal deploy.
 
 ### List hubs and channels (for selection)
 
 ```bash
+# ($ST = smartthings + any --token/--profile from "Choosing auth at runtime" above)
 # Hubs — NO `smartthings hubs`; filter the device list by type HUB
-smartthings devices --json | jq '[.[] | select(.type=="HUB") | {deviceId, label, locationId}]'
+$ST devices --json | jq '[.[] | select(.type=="HUB") | {deviceId, label, locationId}]'
 
 # Channels you own
-smartthings edge:channels --json | jq '[.[] | {channelId, name}]'
+$ST edge:channels --json | jq '[.[] | {channelId, name}]'
 
 # Channels a specific hub is already enrolled in
-smartthings edge:channels:enrollments <hub-id> --json
+$ST edge:channels:enrollments <hub-id> --json
 ```
 
 Present these lists and ask the user which **hub** and which **channel** to deploy to before running the install.
 
-### Fast path — one command (package + assign + install)
+### Canonical end-to-end flow (package → channel → assign → enroll → install → verify)
 
-Once you have the channel id and hub id:
-
-```bash
-smartthings edge:drivers:package <driver-dir> --channel <channel-id> --hub <hub-id>
-```
-
-Builds + uploads, assigns to the channel, and installs on the hub in a single call. To let the CLI prompt interactively for the channel/hub instead of passing ids, use `--install` (implies `--assign`):
+The full, reliable deploy. **First set up `$ST` from "Choosing auth at runtime" above** (PAT or
+session), then run in order; capture the id printed by each step. Every command is prefixed with
+`$ST` so the chosen auth/profile flows through. Commands verified against the installed SmartThings
+CLI (`@smartthings/cli`, `smartthings edge:*`).
 
 ```bash
-smartthings edge:drivers:package <driver-dir> --install
+# 1. PACKAGE — build + upload. Prints the Driver Id + version; capture the Driver Id.
+$ST edge:drivers:package <driver-dir> --json
+#    -> { "driverId": "<driver-id>", "version": "<version>", ... }
+
+# 2. CHANNEL — select an existing channel...
+$ST edge:channels --json | jq '[.[] | {channelId, name}]'
+#    ...or CREATE one. Input MUST be a file — stdin/heredoc is NOT supported by this command.
+cat > /tmp/channel.json <<'JSON'
+{ "name": "My Edge Drivers", "description": "Local custom Edge drivers", "termsOfServiceUrl": "https://www.smartthings.com" }
+JSON
+$ST edge:channels:create --input /tmp/channel.json --json   # add --dry-run to validate first, no submit
+#    -> { "channelId": "<channel-id>", ... }
+
+# 3. ASSIGN the driver to the channel (assigns the latest version when no version arg is given)
+$ST edge:channels:assign <driver-id> --channel <channel-id>
+
+# 4. ENROLL the hub in the channel — one-time per hub/channel pair, REQUIRED before install
+$ST edge:channels:enroll <hub-id> --channel <channel-id>
+
+# 5. INSTALL the driver onto the hub
+$ST edge:drivers:install <driver-id> --hub <hub-id> --channel <channel-id>
+
+# 6. VERIFY it is installed
+$ST edge:drivers:installed --hub <hub-id> --json | jq '[.[] | {driverId, name, version}]'
 ```
 
-### Step-by-step path (when you need each id explicitly, or for recovery)
+`$ST` is `smartthings` plus any `--token`/`--profile` you selected. If you're using the default
+session and profile, `$ST` is just `smartthings` and these are the bare commands. Get the `<hub-id>`
+/ `<channel-id>` from "List hubs and channels" above. Steps 3 and 4 are independent (assign =
+driver→channel, enroll = hub→channel); both must be done before step 5.
+
+### One-shot shortcut (only when the hub is ALREADY enrolled)
+
+If the hub is already enrolled in the channel (step 4 done previously), steps 1+3+5 collapse into a
+single call:
 
 ```bash
-# 1. Package + upload — capture the Driver Id from the output
-smartthings edge:drivers:package <driver-dir> --json
-
-# 2. Pick a channel (or create one if none exists)
-smartthings edge:channels --json | jq '[.[] | {channelId, name}]'
-smartthings edge:channels:create --json <<'EOF'
-{ "name": "Custom Edge Drivers", "description": "Local custom Edge drivers", "termsOfServiceUrl": "https://smartthings.com" }
-EOF
-
-# 3. Assign the driver to the channel
-smartthings edge:channels:assign <driver-id> --channel <channel-id>
-
-# 4. Enroll the hub in the channel (one-time per hub/channel pair)
-smartthings edge:channels:enroll <hub-id> --channel <channel-id>
-
-# 5. Install onto the hub
-smartthings edge:drivers:install <driver-id> --hub <hub-id> --channel <channel-id>
-
-# 6. Verify it is installed and active
-smartthings edge:drivers:installed --hub <hub-id> --json
+$ST edge:drivers:package <driver-dir> --channel <channel-id> --hub <hub-id>
+# or, to be prompted for channel/hub instead of passing ids:
+$ST edge:drivers:package <driver-dir> --install
 ```
+
+> **Gotcha:** the one-shot does **not enroll** the hub. On a *fresh* channel/hub pairing its install
+> sub-step fails — run the enroll (step 4) once first, or use the full sequence above. A failure here
+> is about enrollment, **not** driver content: if `package` alone (no `--channel/--hub`) succeeds, the
+> package is valid.
+
+### `--build-only` and `--upload` — you usually do NOT need these
+
+`package <driver-dir>` already builds **and** uploads. The two-step split is for special cases only,
+not the normal deploy:
+
+```bash
+$ST edge:drivers:package <driver-dir> --build-only /tmp/driver.zip  # build zip, NO upload, NO API call
+unzip -l /tmp/driver.zip                                            # inspect exactly what gets packaged
+$ST edge:drivers:package --upload /tmp/driver.zip --json           # upload a previously built zip
+```
+
+- `--build-only <zip>` — **diagnostics**: produce the package and inspect it (`unzip -l`) without
+  hitting the API or consuming the rate limit; or CI build/deploy separation.
+- `--upload <zip>` — uploads a prebuilt zip but does **not** assign or install, so you still run
+  steps 3–5. Don't substitute it for the canonical flow.
+
+For day-to-day deploys, prefer the **canonical flow** (or the one-shot when already enrolled) — not
+`--build-only` + `--upload`.
 
 ### After install — updates & logs
 
 Re-running `edge:drivers:package` to the same channel triggers an OTA hot-reload on enrolled hubs (the hub re-runs each device's `init`; see the `ota-analysis` skill). Stream live driver logs by hub IP:
 
 ```bash
-smartthings edge:drivers:logcat <driver-id> --hub-address <hub-ip>
-smartthings edge:drivers:logcat --all --hub-address <hub-ip> --log-level info
+$ST edge:drivers:logcat <driver-id> --hub-address <hub-ip>
+$ST edge:drivers:logcat --all --hub-address <hub-ip> --log-level info
 ```
 
 ### Auth check before deploying
@@ -218,12 +301,52 @@ The CLI authenticates via `config.yaml` or the browser login flow (see [Auth](#a
 
 ### Resolving 422 (Unprocessable Entity) on `edge:drivers:package`
 
-A `422` from packaging means API-side validation failed. Common causes and fixes:
+**STEP 1 — RETRY FIRST. The `/drivers/package` endpoint returns transient 422s.** This is the
+*dominant* cause of "package keeps failing": the **same bytes** that 422 will succeed on the next
+attempt. So on a 422, **retry the exact same `package` command 2–3 times with a short backoff before
+concluding anything** — do not edit the driver, do not touch `search-parameters.yml`, do not chase
+auth. (Proven repeatedly: identical content 422s then packages cleanly on retry. A 422 is **never**
+auth — a failed login is `401`/`403`.)
+
+```bash
+# Retry-with-backoff: succeeds on the first transient-clear, otherwise falls through to diagnosis
+for i in 1 2 3; do
+  out=$(smartthings edge:drivers:package "$DRIVER_DIR" --json 2>&1)
+  echo "$out" | grep -q '"driverId"' && { echo "$out"; break; }
+  echo "package attempt $i got 422/err — retrying…"; sleep 4
+done
+```
+
+**STEP 2 — only if ALL retries fail, THEN it's a content problem.** The CLI truncates the real
+message as `error: [Object]`; read it and/or run the local gate:
+
+```bash
+SMARTTHINGS_DEBUG=true smartthings edge:drivers:package . 2>&1 | grep -iA2 'unprocess\|constraint\|detail\|"message"'
+# and the local validation gate (categories, name/parity, luac) — see the `edge-validation` skill
+```
+
+> **Do not misattribute a transient 422.** If you edit a file, retry, and it succeeds, that is almost
+> always the flaky endpoint clearing — **not** your edit. Confirm a claimed "fix" against a
+> known-good driver before believing it (e.g. v312 packages fine *with* `serviceType:`, so that key
+> is not a 422 cause). Don't cite an unrelated edit as the root cause.
+
+Common real content causes (only relevant after retries are exhausted):
 
 - **Invalid profile category** — a `categories:` entry in `profiles/*.yml` uses a non-standard name. Use only verified values (see the `smartthings-profile-generation` skill): `TempSensor` (not `TemperatureSensor`), `LeakSensor` (not `WaterSensor`), `Blind` (not `Blinds`/`BlindController`), `Bridges` (not `Bridge`), `SmartLock` (not `Lock`), `Light` (not `Dimmer`), `GenericSensor` (not `Sensor`/`Other`).
 - **Missing/duplicate profile fields** — the YAML lacks a top-level `name:`, or two components share an `id`. Ensure `name: vendor-profile-name` exists and component ids are unique (`main`, `switch2`, …).
 - **Profile-name mismatch in Lua** — a `src/*.lua` file references a profile that no profile YAML declares (or differs in case). Verify: `grep -rn "profile =" src/` and match each against a `name:` in `profiles/`.
 - **Lua syntax error** — validate locally before packaging: `luac -p src/**/*.lua`.
+
+> **🚫 Never do these (security + dead-ends).** When a deploy command errors, the CLI already holds
+> valid auth — so:
+> - **Do NOT** read or scrape credential stores (`~/.smartthings/credentials.json`, `config.json`,
+>   the OS keyring / `secret-tool`, `/proc/self/environ`, `$SMARTTHINGS_TOKEN`).
+> - **Do NOT** reuse a bearer token seen in an error message or log — that token is a leaked
+>   credential; using it is a security violation (and won't fix a content 422 anyway).
+> - **Do NOT** `curl https://api.smartthings.com/...` directly to bypass the CLI. The CLI is the
+>   supported, authenticated path; bypassing it wastes effort and mishandles credentials.
+> If auth genuinely failed (401/403), fix it via `smartthings config` / re-login (see [Auth](#auth)) —
+> not by extracting tokens.
 
 ## Rate limits
 

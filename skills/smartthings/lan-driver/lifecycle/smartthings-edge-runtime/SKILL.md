@@ -33,8 +33,20 @@ This skill covers the mechanics of the `cosock` (Cooperative Sockets) scheduler,
 
 ### Cooperative Rules
 - **No blocking calls**: Never use standard blocking APIs (e.g. `os.execute`, external blocking socket libraries, or infinite `while true do` loops without yields).
-- **Explicit yielding**: Yield control back to the scheduler using `socket.sleep(seconds)` or by calling non-blocking socket operations.
+- **Explicit yielding**: Yield control back to the scheduler with **`socket.sleep(seconds)`**, where `local socket = require "cosock.socket"`.
 - **Run under cosock**: All asynchronous threads must be spawned using `cosock.spawn`.
+
+> **🚫 There is NO `cosock.sleep` — it is `nil`.** `sleep` lives on the **socket** module
+> (`require "cosock.socket"`), not on `cosock`. Writing `cosock.sleep(n)` raises
+> `attempt to call a nil value (field 'sleep')` the instant the thread runs — and if that thread is
+> spawned in `init.lua`, the driver **crashes at startup** (the whole runner dies → `BACKOFF` →
+> bridge never loads). The reference driver only ever calls `socket.sleep(...)` (in `discovery.lua`,
+> `lunchbox/rest.lua`, `fibaro/sync.lua`); it never references `cosock.sleep`. Always:
+> ```lua
+> local socket = require "cosock.socket"
+> socket.sleep(5)        -- ✅ correct
+> -- cosock.sleep(5)     -- ❌ nil → crash
+> ```
 
 ---
 
@@ -103,7 +115,14 @@ end, "receiver")
 
 ## 4. Timers and Schedules
 
-The SmartThings Edge SDK provides driver-level wrapper methods for timers. These should be used instead of raw `cosock` spawn loops for scheduling actions.
+The SmartThings Edge SDK provides driver-level wrapper methods for timers. **Use these for periodic
+work — do NOT write a `cosock.spawn(function() while true do … socket.sleep(n) end end)` loop**
+(especially not in `init.lua`). The reference driver schedules its recurring poll on the **bridge
+device's thread** (`bridge.thread:call_on_schedule(...)`, set up in `sync.start_poll_timer` and
+cancelled with `bridge.thread:cancel_timer(...)`), and its optional init-level mDNS rescan uses the
+**driver** timer (`driver:call_on_schedule(MDNS_SCAN_INTERVAL, discovery.do_mdns_scan, name)`) — never
+a hand-rolled spawn+sleep loop. A spawn+sleep loop in `init.lua` is also where the fatal
+`cosock.sleep` mistake tends to appear (see §1) and take the whole driver down at startup.
 
 ### A. One-Shot Timer (`call_with_delay`)
 Runs a callback after a specified delay (in seconds).
