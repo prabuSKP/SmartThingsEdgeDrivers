@@ -30,4 +30,9 @@ matterGeneric:
     deviceTypes:
       - id: 0x050D #Device Energy Management
     deviceProfileName: dem-standalone
+  - id: "matter/electrical-utility-meter"
+    deviceLabel: Matter Electrical Utility Meter
+    deviceTypes:
+      - id: 0x0511 #Electrical Utility Meter
+    deviceProfileName: electrical-utility-meter
 
