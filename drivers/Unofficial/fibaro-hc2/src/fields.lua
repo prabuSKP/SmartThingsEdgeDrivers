@@ -7,6 +7,11 @@ local fields = {
   BRIDGE_HOST = "bridge_host",
   BRIDGE_PORT = "bridge_port",
   BRIDGE_SCHEME = "bridge_scheme",
+  -- Dynamically fetched HC3 CA certificate (PEM) and its SHA-256 fingerprint.
+  -- Populated from GET /api/settings/certificates/ca after the first HTTPS bootstrap,
+  -- then used to pin/validate every subsequent TLS connection. See fibaro/cert.lua.
+  BRIDGE_CA_PEM = "bridge_ca_pem",
+  BRIDGE_CA_FP = "bridge_ca_fp",
   DISCOVERY_SOURCE = "discovery_source",
   LAST_REFRESH_STATES = "last_refresh_states",
   PLATFORM = "platform",

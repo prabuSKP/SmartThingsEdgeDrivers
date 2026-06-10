@@ -3,6 +3,7 @@ local socket = require "cosock.socket"
 local log = require "log"
 
 local adapter_lib = require "fibaro.adapter"
+local cert = require "fibaro.cert"
 local fields = require "fields"
 local FibaroApi = require "fibaro.api"
 local mapper = require "fibaro.mapper"
@@ -100,41 +101,52 @@ end
 
 local function get_bridge_endpoint_config(bridge)
   local prefs = bridge.preferences or {}
-  local field_scheme = bridge:get_field(fields.BRIDGE_SCHEME)
   local field_host = bridge:get_field(fields.BRIDGE_HOST)
   local field_port = bridge:get_field(fields.BRIDGE_PORT)
 
-  -- Use preference override if set, otherwise auto-detected field
-  local opt_scheme = get_pref_override(prefs.scheme)
-  local scheme = normalize_scheme(opt_scheme or field_scheme)
+  -- Protocol is gated strictly on the settings-card "Protocol" selection. We deliberately
+  -- ignore the auto-detected scheme so discovery alone never enables HTTPS: the default is
+  -- http unless the card explicitly says https. normalize_scheme(nil) -> "http".
+  local scheme = normalize_scheme(get_pref_override(prefs.scheme))
 
   local host = utils.trim(get_pref_override(prefs.host) or field_host or "")
 
-  -- Determine the port based on preferences and scheme
+  -- Port: an explicit card value wins. Otherwise default to the resolved scheme's well-known
+  -- port (80/443). A discovered non-standard port is preserved, but a discovered 80/443 is
+  -- replaced by the scheme default so leaving the card on http never targets the hub's 443
+  -- (and choosing https never targets 80).
   local opt_port = utils.safe_tonumber(get_pref_override(prefs.port))
-  local port
-  if opt_port then
-    port = opt_port
-  elseif opt_scheme and opt_scheme ~= field_scheme then
-    -- User explicitly changed the scheme, so default the port based on the new scheme
-    port = (scheme == "https" and 443 or 80)
-  else
-    port = utils.safe_tonumber(field_port) or (scheme == "https" and 443 or 80)
+  local default_port = (scheme == "https" and 443 or 80)
+  local port = opt_port
+  if not port then
+    local detected_port = utils.safe_tonumber(field_port)
+    if detected_port and detected_port ~= 80 and detected_port ~= 443 then
+      port = detected_port
+    else
+      port = default_port
+    end
   end
 
   if host == "" then
     return nil, "bridge host unavailable"
   end
 
-  -- TLS server validation mode for HTTPS: "peer" (validate against bundled pinned
-  -- cert, default) or "none" (encrypt-only fallback). Only relevant when scheme=https.
-  local tls_verify = get_pref_override(prefs.tlsVerify) or "peer"
+  -- TLS trust model for HTTPS (only relevant when scheme=https):
+  --  * "auto" (default): dynamic CA pin — fetch the hub CA and validate against it.
+  --  * "none": encrypt-only fallback, no validation.
+  --  * "bundled": legacy static pin against src/fibaro_server.crt.
+  local tls_verify = tostring(get_pref_override(prefs.tlsVerify) or "auto"):lower()
+
+  -- Pinned CA fingerprint captured by maybe_provision_ca on first HTTPS contact. When
+  -- present (and tls_verify="auto") the api layer enforces it after every handshake.
+  local ca_fp = bridge:get_field(fields.BRIDGE_CA_FP)
 
   return {
     scheme = scheme,
     host = host,
     port = port,
     tls_verify = tls_verify,
+    ca_fp = ca_fp,
   }, nil
 end
 
@@ -184,6 +196,7 @@ local function get_bridge_config(bridge, opts)
     host = endpoint.host,
     port = endpoint.port,
     tls_verify = endpoint.tls_verify,
+    ca_fp = endpoint.ca_fp,
     username = auth and auth.username or "",
     password = auth and auth.password or "",
   }
@@ -251,6 +264,67 @@ local function controller_for_bridge(bridge, payload, info)
   return adapter_lib.default_for_scheme(scheme)
 end
 
+-- Dynamic CA provisioning. On the first successful HTTPS bootstrap of a bridge (while the
+-- connection is still verify=none / trust-on-first-use), fetch the hub's CA certificate,
+-- fingerprint it, and persist both so every subsequent connection is pinned to it. Only
+-- runs in "auto" TLS mode and only until a CA is pinned. Failures degrade gracefully:
+-- the integration keeps working encrypt-only and provisioning is retried next bootstrap.
+local function maybe_provision_ca(bridge, api)
+  local endpoint = get_bridge_endpoint_config(bridge)
+  if not endpoint or endpoint.scheme ~= "https" then
+    return
+  end
+  if (endpoint.tls_verify or "auto") ~= "auto" then
+    return  -- "none"/"bundled" do not use the dynamic pin
+  end
+  if bridge:get_field(fields.BRIDGE_CA_FP) then
+    return  -- already pinned
+  end
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Provisioning CA for bridge %s via GET /api/settings/certificates/ca", bridge.label))
+
+  local raw, err, status = api:get_ca_certificate()
+  if err ~= nil or status ~= 200 or raw == nil then
+    log.warn_with({hub_logs = true}, string.format(
+      "[Fibaro] CA provisioning skipped for %s (staying encrypt-only): err=%s status=%s",
+      bridge.label, tostring(err), tostring(status)))
+    return
+  end
+
+  local pem, pem_err = cert.extract_pem(raw)
+  if not pem then
+    log.warn_with({hub_logs = true}, string.format(
+      "[Fibaro] CA provisioning: could not extract PEM for %s: %s", bridge.label, tostring(pem_err)))
+    return
+  end
+
+  -- Print the received certificate for debugging, as requested.
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Received CA certificate for bridge %s from /api/settings/certificates/ca:\n%s",
+    bridge.label, pem))
+
+  local fp, fp_err = cert.fingerprint(pem)
+  if not fp then
+    -- Keep the PEM for visibility but do not pin without a usable fingerprint.
+    bridge:set_field(fields.BRIDGE_CA_PEM, pem, { persist = true })
+    log.warn_with({hub_logs = true}, string.format(
+      "[Fibaro] CA provisioning: fingerprint unavailable for %s (%s); remaining encrypt-only",
+      bridge.label, tostring(fp_err)))
+    return
+  end
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] CA certificate details for bridge %s: %s", bridge.label, cert.describe(pem)))
+
+  bridge:set_field(fields.BRIDGE_CA_PEM, pem, { persist = true })
+  bridge:set_field(fields.BRIDGE_CA_FP, fp, { persist = true })
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] CA pinned for bridge %s: sha256=%s. Subsequent HTTPS calls are certificate-validated.",
+    bridge.label, fp))
+end
+
 local function bootstrap_bridge(bridge)
   local api, api_err = api_for_bridge(bridge, { allow_anonymous = true })
   if api == nil then
@@ -264,10 +338,15 @@ local function bootstrap_bridge(bridge)
   end
 
   local info, info_err, info_status = api:get_settings_info()
-  api:shutdown()
   if info_err ~= nil or info_status ~= 200 then
+    api:shutdown()
     return nil, info_err or ("unexpected settings/info status " .. tostring(info_status))
   end
+
+  -- Fetch + pin the hub CA on first HTTPS contact, reusing this verify=none connection.
+  maybe_provision_ca(bridge, api)
+
+  api:shutdown()
 
   local adapter = controller_for_bridge(bridge, nil, info)
   return {

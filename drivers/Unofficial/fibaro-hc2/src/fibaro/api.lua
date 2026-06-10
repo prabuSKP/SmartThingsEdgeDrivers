@@ -2,6 +2,7 @@ local base64 = require "st.base64"
 local json = require "st.json"
 local log = require "log"
 
+local cert = require "fibaro.cert"
 local RestClient = require "lunchbox.rest"
 local utils = require "utils"
 
@@ -86,25 +87,54 @@ local function build_base_url(config)
   return string.format("%s://%s:%d", config.scheme or "http", config.host, port)
 end
 
--- Bundled, pinned Fibaro/HC3 server certificate. Relative path is resolved from the
--- driver's src/ working directory at runtime (same mechanism as SmartThings' own jbl
--- driver). To target a real HC3, replace src/fibaro_server.crt with that hub's cert
--- (the self-signed leaf, or the issuing CA if the cert is chained) — no code change.
+-- Legacy bundled certificate, used only by the "bundled" TLS mode. Relative path is
+-- resolved from the driver's src/ working directory at runtime (the SmartThings jbl /
+-- Aqara fp2 pattern). The default "auto" mode does NOT use this — it pins the CA fetched
+-- live from the hub instead (see fibaro/cert.lua and sync.maybe_provision_ca).
 local FIBARO_CAFILE = "./fibaro_server.crt"
 
--- Build the TLS config for an HTTPS Fibaro endpoint.
---  * "peer" (default): validate the server cert against the bundled pinned cert (cafile).
---    Defeats man-in-the-middle. Fails on a wrong/expired/non-matching cert (by design).
---  * "none": encrypt only, do NOT validate (legacy/fallback for hubs whose cert is not
---    bundled or is expired). Selected via the bridge "TLS Verify" preference.
-local function https_ssl_config(tls_verify)
-  if tostring(tls_verify or "peer"):lower() == "none" then
-    return { mode = "client", protocol = "any", verify = "none", options = "all" }
+-- Build the luasec TLS config (and optional pin verifier) for an HTTPS Fibaro endpoint.
+-- tls_verify selects the trust model:
+--  * "auto" (default): encrypt-only transport (verify="none") plus dynamic application-layer
+--    CA pinning. Until a CA has been fetched (config.ca_fp unset) this is the bootstrap /
+--    trust-on-first-use connection; once config.ca_fp is present every connection is
+--    validated against it.
+--  * "none": encrypt only, never validate. Escape hatch (pure Philips Hue model).
+--  * "bundled": legacy static pin against src/fibaro_server.crt (verify="peer", cafile).
+-- Returns ssl_config, pin_verify (pin_verify is nil unless dynamic pinning is active).
+local function build_https_transport(config, label)
+  local prefix = (label and #label > 0) and (label .. " ") or ""
+  local mode = tostring(config.tls_verify or "auto"):lower()
+
+  if mode == "none" then
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] %sHTTPS transport: encrypt-only (verify=none, no certificate pinning)", prefix))
+    return { mode = "client", protocol = "any", verify = "none", options = "all" }, nil
   end
-  return { mode = "client", protocol = "any", verify = "peer", options = "all", cafile = FIBARO_CAFILE }
+
+  if mode == "bundled" then
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] %sHTTPS transport: static bundled pin (verify=peer, cafile=%s)", prefix, FIBARO_CAFILE))
+    return { mode = "client", protocol = "any", verify = "peer", options = "all", cafile = FIBARO_CAFILE }, nil
+  end
+
+  -- "auto": verify=none transport with dynamic CA pin enforced after the handshake.
+  local ssl_config = { mode = "client", protocol = "any", verify = "none", options = "all" }
+  if config.ca_fp ~= nil and config.ca_fp ~= "" then
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] %sHTTPS transport: dynamic CA pin ACTIVE (verify=none + post-handshake check, sha256=%s)",
+      prefix, tostring(config.ca_fp)))
+    return ssl_config, cert.make_pin_verify(config.ca_fp, label)
+  end
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] %sHTTPS transport: bootstrap/TOFU (verify=none, awaiting CA fetch from /api/settings/certificates/ca)",
+    prefix))
+  return ssl_config, nil
 end
 
 function fibaro_api.new(config, label)
+  label = label or "Fibaro HC"
   local headers = copy_headers(DEFAULT_HEADERS)
   if (config.username or "") ~= "" or (config.password or "") ~= "" then
     local auth_header = "Basic " .. base64.encode(string.format("%s:%s", config.username or "", config.password or ""))
@@ -112,16 +142,13 @@ function fibaro_api.new(config, label)
   end
   headers["X-Fibaro-Version"] = "2"
 
-  local ssl_config = nil
+  local socket_builder
   if config.scheme == "https" then
-    ssl_config = https_ssl_config(config.tls_verify)
-    log.info_with({hub_logs = true}, string.format(
-      "[Fibaro] HTTPS transport: verify=%s%s",
-      tostring(ssl_config.verify),
-      ssl_config.cafile and (" cafile=" .. ssl_config.cafile) or ""))
+    local ssl_config, pin_verify = build_https_transport(config, label)
+    socket_builder = utils.labeled_socket_builder(label, ssl_config, pin_verify)
+  else
+    socket_builder = utils.labeled_socket_builder(label)
   end
-
-  local socket_builder = utils.labeled_socket_builder(label or "Fibaro HC", ssl_config)
 
   return setmetatable({
     client = RestClient.new(build_base_url(config), socket_builder),
@@ -192,6 +219,15 @@ function fibaro_api:get_settings_info()
   end
   log.info_with({hub_logs = true}, string.format("[Fibaro] API Request Headers: %s", headers_str))
   local response, err = self.client:get("/api/settings/info", self.headers, retry_fn(3))
+  return process_response(response, err)
+end
+
+-- Fetch the hub's CA certificate so the driver can pin/validate TLS dynamically.
+-- Returns (pem_or_table, err, status); the body is PEM (possibly JSON-wrapped) which
+-- fibaro/cert.extract_pem normalizes. Called over the bootstrap verify=none connection.
+function fibaro_api:get_ca_certificate()
+  log.info_with({hub_logs = true}, "[Fibaro] API Request: GET /api/settings/certificates/ca")
+  local response, err = self.client:get("/api/settings/certificates/ca", self.headers, retry_fn(3))
   return process_response(response, err)
 end
 

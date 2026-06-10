@@ -27,7 +27,11 @@ function utils.backoff_builder(max, inc, rand)
   end
 end
 
-function utils.labeled_socket_builder(label, ssl_config)
+-- Build a socket factory. ssl_config is the luasec table passed to ssl.wrap (must contain
+-- only keys luasec understands). pin_verify, when supplied, is a (sock) -> ok, err function
+-- run immediately after a successful handshake to enforce application-layer certificate
+-- pinning (see fibaro/cert.lua); a false result closes the socket and fails the connection.
+function utils.labeled_socket_builder(label, ssl_config, pin_verify)
   local socket = require "cosock.socket"
   local ssl = require "cosock.ssl"
 
@@ -63,6 +67,11 @@ function utils.labeled_socket_builder(label, ssl_config)
     end
 
     if wrap_ssl then
+      log.info_with({hub_logs = true}, string.format(
+        "[Fibaro] %sWrapping socket with TLS (verify=%s%s)",
+        label, tostring(ssl_config.verify),
+        (type(pin_verify) == "function") and ", dynamic CA pin" or ""))
+
       sock, err = ssl.wrap(sock, ssl_config)
       if err ~= nil then
         return nil, "SSL wrap error: " .. err
@@ -71,6 +80,17 @@ function utils.labeled_socket_builder(label, ssl_config)
       _, err = sock:dohandshake()
       if err ~= nil then
         return nil, "SSL handshake error: " .. err
+      end
+      log.info_with({hub_logs = true}, string.format("[Fibaro] %sTLS handshake complete", label))
+
+      if type(pin_verify) == "function" then
+        local pin_ok, pin_err = pin_verify(sock)
+        if not pin_ok then
+          log.error_with({hub_logs = true}, string.format(
+            "[Fibaro] %sTLS certificate pin verification FAILED: %s", label, tostring(pin_err)))
+          pcall(function() sock:close() end)
+          return nil, "TLS pin verification failed: " .. tostring(pin_err)
+        end
       end
     end
 

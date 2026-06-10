@@ -9,7 +9,7 @@ components:
 preferences:
   - name: scheme
     title: Protocol
-    description: Auto-detected for mDNS-discovered bridges. Only set manually to override (http or https).
+    description: "Protocol used to reach the hub. Leave blank or set to http for plain HTTP (default). Set to https to enable TLS. HTTPS is used only when this is set to https — it is never auto-enabled by discovery."
     required: false
     preferenceType: string
     definition:
@@ -19,14 +19,14 @@ preferences:
       default: ""
   - name: tlsVerify
     title: TLS Verify
-    description: "HTTPS only. peer = validate the hub's certificate against the bundled cert (default, recommended). none = encrypt only, no validation (use if the hub cert is not bundled or is expired)."
+    description: "HTTPS only. auto = fetch the hub's CA from /api/settings/certificates/ca and validate every connection against it (default, recommended). none = encrypt only, no validation. bundled = validate against the certificate shipped in the driver."
     required: false
     preferenceType: string
     definition:
       stringType: text
       minLength: 0
-      maxLength: 5
-      default: "peer"
+      maxLength: 8
+      default: "auto"
   - name: host
     title: Fibaro Host
     description: Auto-populated by mDNS discovery. Leave empty for discovered bridges. Set manually only for HC2 or to override the discovered address.
