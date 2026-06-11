@@ -111,19 +111,24 @@ local function get_bridge_endpoint_config(bridge)
 
   -- Host resolution precedence:
   --  1. Explicit host/IP on the settings card (manual override, also covers HC2).
-  --  2. Serial number on the card (or captured during sync) -> "hc3-<serial>.local",
-  --     resolved by the hub's mDNS resolver. This is the primary HC3 path since HC3
-  --     does not advertise a browsable mDNS service for auto-discovery.
-  --  3. A host previously captured by discovery.
+  --  2. The IP captured by discovery. SSDP yields the controller's real IP from the
+  --     M-SEARCH LOCATION header, so always prefer it over a constructed hostname.
+  --  3. Serial number -> "hc3-<serial>.local" as a last resort, only when no IP is known
+  --     (e.g. a manual bridge where the user typed a serial but no IP). The hub's socket
+  --     layer does not resolve mDNS ".local" names, so this rarely connects; it is kept
+  --     only as a best-effort fallback.
   local host_override, host_override_port = utils.sanitize_host(get_pref_override(prefs.host))
+  local discovered_host = utils.trim(field_host or "")
   local serial = utils.trim(get_pref_override(prefs.serialNumber) or bridge:get_field(fields.SERIAL_NUMBER) or "")
   local host, host_source, embedded_port
   if host_override ~= "" then
     host, host_source, embedded_port = host_override, "host-preference", host_override_port
+  elseif discovered_host ~= "" then
+    host, host_source = discovered_host, "discovered-ip"
   elseif serial ~= "" then
     host, host_source = utils.hostname_for_serial(serial), "serial-mdns"
   else
-    host, host_source = utils.trim(field_host or ""), "discovered-field"
+    host, host_source = "", "none"
   end
 
   -- Port precedence: explicit card value > a port embedded in the host field

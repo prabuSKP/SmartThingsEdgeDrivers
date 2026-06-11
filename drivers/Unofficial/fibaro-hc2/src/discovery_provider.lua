@@ -7,6 +7,8 @@ local ltn12 = require "ltn12"
 local net_utils = require "st.net_utils"
 
 local utils = require "utils"
+local ssdp = require "ssdp"
+local fibaro_finder = require "fibaro_finder"
 
 local discovery_provider = {}
 
@@ -182,6 +184,8 @@ discovery_provider.normalize_candidate = normalize_candidate
 
 -- Discovery method enum
 discovery_provider.METHOD = {
+  FINDER = "fibaro_finder",
+  SSDP = "ssdp",
   MDNS = "mdns",
   FIND_FIBARO = "find_fibaro",
   MANUAL = "manual"
@@ -220,11 +224,60 @@ local function extract_port(device_info)
 end
 
 -- ============================================
--- TIER 1: mDNS Discovery
+-- TIER 1: Fibaro find server (UDP 44444/9999)
+-- ============================================
+
+-- The native local discovery used by the official Fibaro app/web (per the HC manual's
+-- factory-default interface table). UDP broadcast request -> the HC replies with its info.
+-- This is the only auto-discovery the manual confirms HC3 supports (no SSDP, mDNS is
+-- hostname-only). See fibaro_finder.lua -- it is heavily logged so the response format can
+-- be tuned from a real run.
+function discovery_provider.discover_via_finder(driver)
+  log.info_with({hub_logs = true}, "[Fibaro] ========== TIER 1: Starting Fibaro find-server Discovery ==========")
+
+  local devices = fibaro_finder.scan(driver)
+  for _, candidate in ipairs(devices) do
+    candidate.discovery_source = discovery_provider.METHOD.FINDER
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] finder candidate added: host=%s, port=%d, serial=%s, platform=%s",
+      tostring(candidate.host), candidate.port,
+      tostring(candidate.serial_number), tostring(candidate.platform)))
+  end
+
+  log.info_with({hub_logs = true}, string.format("[Fibaro] Fibaro find-server discovery complete: %d valid devices found", #devices))
+  return devices, nil
+end
+
+-- ============================================
+-- TIER 2: SSDP / UPnP Discovery
+-- ============================================
+
+-- Discover HC3 controllers via SSDP M-SEARCH. A reply's LOCATION header gives the real IP
+-- (and the description XML the serial), so the bridge connects by IP -- no .local resolution.
+-- NOTE: the Fibaro manual lists no UPnP/SSDP interface, so a real HC3 will not answer this;
+-- kept as a best-effort secondary for any future firmware / third-party gateway.
+function discovery_provider.discover_via_ssdp(driver)
+  log.info_with({hub_logs = true}, "[Fibaro] ========== TIER 2: Starting SSDP Discovery ==========")
+
+  local devices = ssdp.scan()
+  for _, candidate in ipairs(devices) do
+    candidate.discovery_source = discovery_provider.METHOD.SSDP
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] SSDP candidate added: host=%s, port=%d, serial=%s, platform=%s",
+      tostring(candidate.host), candidate.port,
+      tostring(candidate.serial_number), tostring(candidate.platform)))
+  end
+
+  log.info_with({hub_logs = true}, string.format("[Fibaro] SSDP discovery complete: %d valid devices found", #devices))
+  return devices, nil
+end
+
+-- ============================================
+-- TIER 3: mDNS Discovery
 -- ============================================
 
 function discovery_provider.discover_via_mdns(driver)
-  log.info_with({hub_logs = true}, "[Fibaro] ========== TIER 1: Starting mDNS Discovery ==========")
+  log.info_with({hub_logs = true}, "[Fibaro] ========== TIER 3: Starting mDNS Discovery ==========")
   
   local discovery_responses, err = mdns.discover(MDNS_SERVICE_TYPE, MDNS_DOMAIN)
   if err ~= nil then
@@ -383,18 +436,34 @@ function discovery_provider.discover_with_fallback(driver, options)
   log.info_with({hub_logs = true}, "[Fibaro] Starting Fibaro discovery")
   log.info_with({hub_logs = true}, "[Fibaro] ========================================")
 
-  -- Tier 1: best-effort mDNS browse. HC3 does not advertise a browsable service,
-  -- so this normally finds nothing, but it is kept for any future firmware /
-  -- third-party gateway that does advertise _http._tcp with Fibaro TXT records.
-  local devices = discovery_provider.discover_via_mdns(driver)
+  -- Tier 1: Fibaro find server (UDP 44444/9999). The native local discovery the official
+  -- app uses, and the only one the HC manual confirms HC3 supports. A reply gives the real
+  -- IP, so we connect by IP. Heavily logged so the response format can be tuned from a run.
+  local devices = discovery_provider.discover_via_finder(driver)
+  if #devices > 0 then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via Fibaro find server: %d devices", #devices))
+    return devices
+  end
+
+  -- Tier 2: SSDP / UPnP. The manual lists no UPnP, so a real HC3 will not answer; kept as a
+  -- best-effort secondary for future firmware / third-party gateways.
+  devices = discovery_provider.discover_via_ssdp(driver)
+  if #devices > 0 then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via SSDP: %d devices", #devices))
+    return devices
+  end
+
+  -- Tier 3: best-effort mDNS browse. HC3 advertises no browsable service (Avahi is
+  -- hostname-resolution only), so this normally finds nothing; kept for completeness.
+  devices = discovery_provider.discover_via_mdns(driver)
   if #devices > 0 then
     log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via mDNS: %d devices", #devices))
     return devices
   end
 
-  -- Tier 2: manual-entry bridge. Gives the user a card to enter the HC3 serial
-  -- number into; the bridge reaches the hub at hc3-<serial>.local from there.
-  log.info_with({hub_logs = true}, "[Fibaro] mDNS found no devices; creating manual-entry bridge for serial-number setup")
+  -- Tier 4: manual-entry bridge. Gives the user a card to enter the HC3 IP (or serial)
+  -- into when no automatic method could locate the controller.
+  log.info_with({hub_logs = true}, "[Fibaro] find server / SSDP / mDNS found no devices; creating manual-entry bridge for setup")
   return { discovery_provider.build_manual_bridge() }
 end
 
