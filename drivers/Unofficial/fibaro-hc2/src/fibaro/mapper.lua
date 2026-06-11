@@ -444,10 +444,19 @@ function mapper.map_device(device, rooms, parent_is_multichannel)
       -- Detection is interface-driven, matching the rest of the mapper.
       local profile = rule.profile
       local metered = false
-      if (rule.kind == "switch" or rule.kind == "dimmer" or rule.kind == "blind")
-        and (has_interface(interfaces, "energy") or has_interface(interfaces, "power")) then
-        profile = rule.profile .. "-metered"
-        metered = true
+      if (rule.kind == "switch" or rule.kind == "dimmer" or rule.kind == "blind") then
+        -- Primary signal: the device advertises the energy/power interface. Fallback:
+        -- some HC3 firmware reports properties.power / properties.energy values without
+        -- listing the interface, so treat a present metering value as metered too.
+        local by_interface = has_interface(interfaces, "energy") or has_interface(interfaces, "power")
+        local by_value = device.power ~= nil or device.energy ~= nil
+        if by_interface or by_value then
+          profile = rule.profile .. "-metered"
+          metered = true
+          log.info_with({hub_logs = true}, string.format(
+            "[Fibaro] Device %s metered detected (interface=%s, value=%s) -> %s",
+            tostring(device.id), tostring(by_interface), tostring(by_value), profile))
+        end
       end
 
       log.info_with({hub_logs = true}, string.format(

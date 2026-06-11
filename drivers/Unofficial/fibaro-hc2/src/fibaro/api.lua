@@ -142,6 +142,13 @@ function fibaro_api.new(config, label)
   end
   headers["X-Fibaro-Version"] = "2"
 
+  local base_url = build_base_url(config)
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] API client for %s -> %s (auth: %s, tls_verify: %s)",
+    label, base_url,
+    (headers["Authorization"] ~= nil) and "basic" or "none",
+    (config.scheme == "https") and tostring(config.tls_verify or "auto") or "n/a"))
+
   local socket_builder
   if config.scheme == "https" then
     local ssl_config, pin_verify = build_https_transport(config, label)
@@ -151,7 +158,7 @@ function fibaro_api.new(config, label)
   end
 
   return setmetatable({
-    client = RestClient.new(build_base_url(config), socket_builder),
+    client = RestClient.new(base_url, socket_builder),
     headers = headers,
   }, fibaro_api)
 end

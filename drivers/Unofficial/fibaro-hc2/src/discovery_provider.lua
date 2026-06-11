@@ -15,15 +15,13 @@ local MDNS_DOMAIN = "local"
 local MDNS_SERVICE_TYPE = "_http._tcp"
 local FIND_FIBARO_URL = "http://find.fibaro.com/api/find/devices"
 local FIND_FIBARO_TIMEOUT = 10
-local DEFAULT_HARDCODED_IP = "192.168.68.122"
 local DEFAULT_PORT = 80
 
--- Ping hosts
-local PING_HOSTS = {
-  "192.168.68.122",
-  "192.168.68.122",
-  "hc3-00033787.local"
-}
+-- Stable DNI for the manual-entry bridge. A real HC3 does not advertise a
+-- browsable mDNS service, so auto-discovery cannot find it. We always create
+-- this single bridge so the user has a settings card to enter the HC3 serial
+-- number (or an IP) into; the bridge then reaches the hub at hc3-<serial>.local.
+local MANUAL_BRIDGE_DNI = "fibaro-hc3:manual"
 
 -- ============================================
 -- Enhanced normalize_candidate function with IPv6 support
@@ -186,7 +184,7 @@ discovery_provider.normalize_candidate = normalize_candidate
 discovery_provider.METHOD = {
   MDNS = "mdns",
   FIND_FIBARO = "find_fibaro",
-  HARDCODED = "hardcoded"
+  MANUAL = "manual"
 }
 
 -- ============================================
@@ -353,114 +351,51 @@ function discovery_provider.discover_via_find_fibaro(driver)
 end
 
 -- ============================================
--- TIER 3: Hardcoded IP Fallback
+-- Manual-entry bridge (primary path for HC3)
 -- ============================================
 
-function discovery_provider.discover_via_hardcoded(driver, ip)
-  ip = ip or DEFAULT_HARDCODED_IP
-  log.info_with({hub_logs = true}, "[Fibaro] ========== TIER 3: Starting Hardcoded IP Fallback ==========")
-  log.info_with({hub_logs = true}, string.format("[Fibaro] Using hardcoded IP: %s, port: %d", ip, DEFAULT_PORT))
-  
-  local device = {
-    host = ip,
+-- A placeholder bridge with no host. The user opens its settings and enters the
+-- HC3 serial number; sync then resolves the host to hc3-<serial>.local. Created
+-- once (stable DNI) so repeated scans never spawn duplicates.
+function discovery_provider.build_manual_bridge()
+  return {
+    host = "",
     port = DEFAULT_PORT,
     scheme = "http",
     serial_number = "",
     platform = "HC3",
-    discovery_source = discovery_provider.METHOD.HARDCODED,
+    discovery_source = discovery_provider.METHOD.MANUAL,
     controller_kind = "hc3",
-    device_network_id = "fibaro-hc3:" .. ip:gsub("%.", "-"),
-    label = "Fibaro HC3 (Hardcoded)",
-    api_version = 5
+    device_network_id = MANUAL_BRIDGE_DNI,
+    label = "Fibaro HC3",
+    api_version = 5,
   }
-  
-  log.info_with({hub_logs = true}, string.format(
-    "[Fibaro] Hardcoded device created: host=%s, port=%d, dni=%s",
-    tostring(device.host),
-    device.port,
-    tostring(device.device_network_id)
-  ))
-  
-  return {device}, nil
 end
 
 -- ============================================
--- Helper function for ping operations
--- ============================================
-
-local function ping_host(host)
-  log.info_with({hub_logs = true}, string.format("[Fibaro] Checking connectivity to host: %s", host))
-  
-  -- Try to create a TCP connection to check if host is reachable
-  local sock = socket.tcp()
-  if not sock then
-    log.info_with({hub_logs = true}, string.format("[Fibaro] Failed to create socket for host: %s", host))
-    return false
-  end
-  
-  sock:settimeout(3)  -- 3 second timeout
-  local result, err = sock:connect(host, 80)
-  sock:close()
-  
-  local success = (result == 1 or result == true)
-  log.info_with({hub_logs = true}, string.format("[Fibaro] Host connectivity check %s: %s", host, success and "SUCCESS" or "FAILED"))
-  return success
-end
-
--- ============================================
--- Main Fallback Discovery Function
+-- Main Discovery Function
 -- ============================================
 
 function discovery_provider.discover_with_fallback(driver, options)
   options = options or {}
-  local devices = {}
-  
-  log.info_with({hub_logs = true}, "[Fibaro] ========================================")
-  log.info_with({hub_logs = true}, "[Fibaro] Starting Discovery with Fallback")
-  log.info_with({hub_logs = true}, string.format("[Fibaro] Hardcoded IP option: %s", tostring(options.hardcoded_ip or DEFAULT_HARDCODED_IP)))
-  log.info_with({hub_logs = true}, "[Fibaro] ========================================")
-  
-  -- Perform ping operations before any discovery
-  log.info_with({hub_logs = true}, "[Fibaro] Performing ping operations before discovery")
-  for _, host in ipairs(PING_HOSTS) do
-    ping_host(host)
-  end
-  
-  -- Tier 1: mDNS
-  devices, _ = discovery_provider.discover_via_mdns(driver)
-  if #devices > 0 then
-   log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via mDNS: %d devices", #devices))
-   return devices
-  end
-  
-  -- Tier 2: find.fibaro.com
-  -- log.info_with({hub_logs = true}, "[Fibaro] mDNS found no devices, falling back to find.fibaro.com")
-  -- devices, _ = discovery_provider.discover_via_find_fibaro(driver)
-  -- if #devices > 0 then
-  --   log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via find.fibaro.com: %d devices", #devices))
-  --  return devices
-  -- end
-  
-  -- Tier 3: Hardcoded IP
-   log.info_with({hub_logs = true}, "[Fibaro] find.fibaro.com found no devices, falling back to hardcoded IP")
-   local hardcoded_ip = options.hardcoded_ip or DEFAULT_HARDCODED_IP
-   devices, _ = discovery_provider.discover_via_hardcoded(driver, hardcoded_ip)
-   if #devices > 0 then
-    log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Using hardcoded IP: %s", hardcoded_ip))
-    return devices
-   end
-  
-  -- Tier 4: Hardcoded IP - 2
-   log.info_with({hub_logs = true}, "[Fibaro] No devices with hardcoded ip - 1, falling back to hardcoded IP 2")
-   local hardcoded_ip_2 = "192.168.68.122"
-   devices, _ = discovery_provider.discover_via_hardcoded(driver, hardcoded_ip_2)
-   if #devices > 0 then
-    log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Using hardcoded IP 2: %s", hardcoded_ip_2))
-    return devices
-   end
 
-  log.warn_with({hub_logs = true}, "[Fibaro] ✗ All discovery methods failed, no devices found")
-  return {}
+  log.info_with({hub_logs = true}, "[Fibaro] ========================================")
+  log.info_with({hub_logs = true}, "[Fibaro] Starting Fibaro discovery")
+  log.info_with({hub_logs = true}, "[Fibaro] ========================================")
+
+  -- Tier 1: best-effort mDNS browse. HC3 does not advertise a browsable service,
+  -- so this normally finds nothing, but it is kept for any future firmware /
+  -- third-party gateway that does advertise _http._tcp with Fibaro TXT records.
+  local devices = discovery_provider.discover_via_mdns(driver)
+  if #devices > 0 then
+    log.info_with({hub_logs = true}, string.format("[Fibaro] ✓ Discovery successful via mDNS: %d devices", #devices))
+    return devices
+  end
+
+  -- Tier 2: manual-entry bridge. Gives the user a card to enter the HC3 serial
+  -- number into; the bridge reaches the hub at hc3-<serial>.local from there.
+  log.info_with({hub_logs = true}, "[Fibaro] mDNS found no devices; creating manual-entry bridge for serial-number setup")
+  return { discovery_provider.build_manual_bridge() }
 end
 
 return discovery_provider

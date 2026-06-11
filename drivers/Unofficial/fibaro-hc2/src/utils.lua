@@ -45,7 +45,9 @@ function utils.labeled_socket_builder(label, ssl_config, pin_verify)
   end
 
   local function make_socket(host, port, wrap_ssl)
-    log.info_with({hub_logs = true}, string.format("[Fibaro] %sCreating TCP socket", label))
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] %sOpening TCP socket to %s:%s (ssl=%s)",
+      label, tostring(host), tostring(port), tostring(wrap_ssl == true)))
     local sock, err = socket.tcp()
     if err ~= nil or not sock then
       return nil, (err or "unknown error creating TCP socket")
@@ -58,8 +60,13 @@ function utils.labeled_socket_builder(label, ssl_config, pin_verify)
 
     _, err = sock:connect(host, port)
     if err ~= nil then
+      log.warn_with({hub_logs = true}, string.format(
+        "[Fibaro] %sTCP connect to %s:%s FAILED: %s",
+        label, tostring(host), tostring(port), tostring(err)))
       return nil, "connect error: " .. err
     end
+    log.info_with({hub_logs = true}, string.format(
+      "[Fibaro] %sTCP connected to %s:%s", label, tostring(host), tostring(port)))
 
     _, err = sock:setoption("keepalive", true)
     if err ~= nil then
@@ -77,11 +84,20 @@ function utils.labeled_socket_builder(label, ssl_config, pin_verify)
         return nil, "SSL wrap error: " .. err
       end
 
+      -- ssl.wrap returns a fresh object that does not inherit the TCP timeout, so a
+      -- silently-dropped or mis-negotiated handshake could otherwise block forever.
+      _, err = sock:settimeout(30)
+      if err ~= nil then
+        return nil, "SSL settimeout error: " .. err
+      end
+
       _, err = sock:dohandshake()
       if err ~= nil then
+        log.warn_with({hub_logs = true}, string.format(
+          "[Fibaro] %sTLS handshake to %s:%s FAILED: %s", label, tostring(host), tostring(port), tostring(err)))
         return nil, "SSL handshake error: " .. err
       end
-      log.info_with({hub_logs = true}, string.format("[Fibaro] %sTLS handshake complete", label))
+      log.info_with({hub_logs = true}, string.format("[Fibaro] %sTLS handshake complete with %s:%s", label, tostring(host), tostring(port)))
 
       if type(pin_verify) == "function" then
         local pin_ok, pin_err = pin_verify(sock)
@@ -122,6 +138,61 @@ end
 
 function utils.is_bridge(device)
   return device.parent_assigned_child_key == nil
+end
+
+-- Build the mDNS hostname a Fibaro HC3 answers to from its serial number.
+-- A real HC3 does not advertise a browsable mDNS service, but it does run a
+-- hostname responder for "hc3-<serial>.local", so this is how the bridge is
+-- reached when the user supplies a serial number instead of an IP.
+-- Tolerant of what the user actually types: bare serial ("00033787"),
+-- prefixed ("hc3-00033787" / "HC3-00033787"), or a full ".local" hostname.
+function utils.hostname_for_serial(serial_number)
+  local value = utils.trim(tostring(serial_number or "")):lower()
+  if value == "" then
+    return nil
+  end
+
+  -- Already a full hostname: pass through (only append the domain if missing).
+  if value:match("%.local$") then
+    return value
+  end
+  if value:match("^hc3%-") then
+    return value .. ".local"
+  end
+
+  return "hc3-" .. value .. ".local"
+end
+
+-- Normalize a user-entered host/IP into something the socket layer can dial.
+-- People routinely paste "http://192.168.1.50", "192.168.1.50/", or
+-- "192.168.1.50:8080" into the host field; passed through verbatim these produce
+-- a malformed base URL and the connection silently fails. Strips an accidental
+-- scheme prefix, surrounding whitespace, and any trailing path, and pulls out an
+-- embedded ":port" (IPv4 / hostname only — IPv6 literals are left untouched).
+-- Returns: clean_host (string, may be ""), embedded_port (number or nil).
+function utils.sanitize_host(raw)
+  local value = utils.trim(tostring(raw or ""))
+  if value == "" then
+    return "", nil
+  end
+
+  -- Drop a leading scheme such as "http://" / "https://".
+  value = value:gsub("^[%a][%w+.%-]*://", "")
+  -- Drop any path / query / trailing slash (e.g. "/api", "/").
+  value = value:gsub("[/?].*$", "")
+  value = utils.trim(value)
+
+  -- Pull out an embedded "host:port" for IPv4 / hostnames. A bare IPv6 literal
+  -- contains multiple colons, so only treat a single-colon "<host>:<digits>" form
+  -- as host+port and leave everything else as-is.
+  if select(2, value:gsub(":", ":")) == 1 then
+    local host, port = value:match("^(.-):(%d+)$")
+    if host and host ~= "" then
+      return utils.trim(host), tonumber(port)
+    end
+  end
+
+  return value, nil
 end
 
 function utils.child_key_for_id(device_id)

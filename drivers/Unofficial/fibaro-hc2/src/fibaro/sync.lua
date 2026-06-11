@@ -109,15 +109,31 @@ local function get_bridge_endpoint_config(bridge)
   -- http unless the card explicitly says https. normalize_scheme(nil) -> "http".
   local scheme = normalize_scheme(get_pref_override(prefs.scheme))
 
-  local host = utils.trim(get_pref_override(prefs.host) or field_host or "")
+  -- Host resolution precedence:
+  --  1. Explicit host/IP on the settings card (manual override, also covers HC2).
+  --  2. Serial number on the card (or captured during sync) -> "hc3-<serial>.local",
+  --     resolved by the hub's mDNS resolver. This is the primary HC3 path since HC3
+  --     does not advertise a browsable mDNS service for auto-discovery.
+  --  3. A host previously captured by discovery.
+  local host_override, host_override_port = utils.sanitize_host(get_pref_override(prefs.host))
+  local serial = utils.trim(get_pref_override(prefs.serialNumber) or bridge:get_field(fields.SERIAL_NUMBER) or "")
+  local host, host_source, embedded_port
+  if host_override ~= "" then
+    host, host_source, embedded_port = host_override, "host-preference", host_override_port
+  elseif serial ~= "" then
+    host, host_source = utils.hostname_for_serial(serial), "serial-mdns"
+  else
+    host, host_source = utils.trim(field_host or ""), "discovered-field"
+  end
 
-  -- Port: an explicit card value wins. Otherwise default to the resolved scheme's well-known
-  -- port (80/443). A discovered non-standard port is preserved, but a discovered 80/443 is
-  -- replaced by the scheme default so leaving the card on http never targets the hub's 443
-  -- (and choosing https never targets 80).
+  -- Port precedence: explicit card value > a port embedded in the host field
+  -- (e.g. "192.168.1.50:8080") > the resolved scheme's well-known port (80/443).
+  -- A discovered non-standard port is preserved, but a discovered 80/443 is
+  -- replaced by the scheme default so leaving the card on http never targets the
+  -- hub's 443 (and choosing https never targets 80).
   local opt_port = utils.safe_tonumber(get_pref_override(prefs.port))
   local default_port = (scheme == "https" and 443 or 80)
-  local port = opt_port
+  local port = opt_port or embedded_port
   if not port then
     local detected_port = utils.safe_tonumber(field_port)
     if detected_port and detected_port ~= 80 and detected_port ~= 443 then
@@ -127,9 +143,17 @@ local function get_bridge_endpoint_config(bridge)
     end
   end
 
-  if host == "" then
+  if host == nil or host == "" then
+    log.warn_with({hub_logs = true}, string.format(
+      "[Fibaro] Bridge %s has no usable host: set an IP/hostname in 'Fibaro Host' or a serial in 'Fibaro Serial Number'.",
+      bridge.label))
     return nil, "bridge host unavailable"
   end
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Bridge %s endpoint resolved: %s://%s:%d (host source: %s%s)",
+    bridge.label, scheme, host, port, host_source,
+    (host_source == "serial-mdns") and (", serial=" .. serial) or ""))
 
   -- TLS trust model for HTTPS (only relevant when scheme=https):
   --  * "auto" (default): dynamic CA pin — fetch the hub CA and validate against it.
@@ -589,6 +613,19 @@ end
 
 local function ensure_child_device(driver, bridge, mapped, existing_child)
   if existing_child then
+    -- SmartThings keeps whatever profile a device was created with; updating the mapper
+    -- alone never migrates an already-created child. Re-assign the profile when the
+    -- mapping now resolves to a different one -- e.g. a "-metered" variant became
+    -- available, or power/energy metering was newly detected on the hub -- so the new
+    -- card (powerMeter/energyMeter) actually shows up. device.profile.id is the profile
+    -- name, so this only fires on a real change and never loops on already-correct devices.
+    local current_profile = existing_child.profile and existing_child.profile.id
+    if mapped.profile and current_profile ~= mapped.profile then
+      log.info_with({hub_logs = true}, string.format(
+        "[Fibaro] Child %s profile change: %s -> %s; updating device metadata",
+        existing_child.label, tostring(current_profile), tostring(mapped.profile)))
+      existing_child:try_update_metadata({ profile = mapped.profile })
+    end
     emit_child_state(existing_child, mapped.raw, mapped.kind)
     return existing_child
   end

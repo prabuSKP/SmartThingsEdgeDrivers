@@ -27,9 +27,19 @@ preferences:
       minLength: 0
       maxLength: 8
       default: "auto"
+  - name: serialNumber
+    title: Fibaro Serial Number
+    description: "HC3 serial number (e.g. 00033787). The driver reaches the hub at hc3-<serial>.local via mDNS, so no IP is needed. Find it in the Fibaro app or on the device label. Ignored if Fibaro Host is set."
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 64
+      default: ""
   - name: host
     title: Fibaro Host
-    description: Auto-populated by mDNS discovery. Leave empty for discovered bridges. Set manually only for HC2 or to override the discovered address.
+    description: "Optional IP address or hostname override. Set for HC2, or to bypass the serial-number/mDNS lookup. Takes precedence over Serial Number when set."
     required: false
     preferenceType: string
     definition:

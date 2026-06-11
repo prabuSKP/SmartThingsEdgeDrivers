@@ -98,19 +98,33 @@ local function cache_bridge_metadata(driver, bridge_data)
   driver.datastore.pending_bridge_data[bridge_data.device_network_id] = bridge_data
 end
 
+-- Only persist values that actually carry information. The manual-entry bridge is
+-- (re)discovered with empty host/serial placeholders on every scan; without this guard
+-- a re-scan would wipe the host, serial, and controller identity that sync.lua learned
+-- from the live hub, knocking a working bridge back offline.
+local function set_field_if_present(device, key, value)
+  if value == nil then
+    return
+  end
+  if type(value) == "string" and utils.trim(value) == "" then
+    return
+  end
+  device:set_field(key, value, { persist = true })
+end
+
 local function set_bridge_identity_fields(device, bridge_data)
   if type(bridge_data) ~= "table" then
     return
   end
 
-  device:set_field(fields.BRIDGE_HOST, bridge_data.host, { persist = true })
-  device:set_field(fields.BRIDGE_PORT, bridge_data.port, { persist = true })
-  device:set_field(fields.BRIDGE_SCHEME, bridge_data.scheme, { persist = true })
-  device:set_field(fields.DISCOVERY_SOURCE, bridge_data.discovery_source, { persist = true })
-  device:set_field(fields.PLATFORM, bridge_data.platform, { persist = true })
-  device:set_field(fields.SERIAL_NUMBER, bridge_data.serial_number, { persist = true })
-  device:set_field(fields.API_VERSION, bridge_data.api_version, { persist = true })
-  device:set_field(fields.CONTROLLER_KIND, bridge_data.controller_kind, { persist = true })
+  set_field_if_present(device, fields.BRIDGE_HOST, bridge_data.host)
+  set_field_if_present(device, fields.BRIDGE_PORT, bridge_data.port)
+  set_field_if_present(device, fields.BRIDGE_SCHEME, bridge_data.scheme)
+  set_field_if_present(device, fields.DISCOVERY_SOURCE, bridge_data.discovery_source)
+  set_field_if_present(device, fields.PLATFORM, bridge_data.platform)
+  set_field_if_present(device, fields.SERIAL_NUMBER, bridge_data.serial_number)
+  set_field_if_present(device, fields.API_VERSION, bridge_data.api_version)
+  set_field_if_present(device, fields.CONTROLLER_KIND, bridge_data.controller_kind)
 end
 
 function discovery.apply_pending_bridge_metadata(driver, device)
@@ -206,10 +220,8 @@ function discovery.discover(driver, _, should_continue)
   log.info_with({hub_logs = true}, "[Fibaro] ========================================")
   
   while should_continue() do
-    local devices = discovery_provider.discover_with_fallback(driver, {
-      hardcoded_ip = "192.168.68.122"  -- Can be made configurable via preferences
-    })
-    
+    local devices = discovery_provider.discover_with_fallback(driver, {})
+
     log.info_with({hub_logs = true}, string.format("[Fibaro] Processing %d discovered devices", #devices))
     
     for i, device in ipairs(devices) do
