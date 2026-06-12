@@ -89,22 +89,22 @@ end
 
 -- Legacy bundled certificate, used only by the "bundled" TLS mode. Relative path is
 -- resolved from the driver's src/ working directory at runtime (the SmartThings jbl /
--- Aqara fp2 pattern). The default "auto" mode does NOT use this — it pins the CA fetched
+-- Aqara fp2 pattern). The "auto" mode does NOT use this — it pins the CA fetched
 -- live from the hub instead (see fibaro/cert.lua and sync.maybe_provision_ca).
 local FIBARO_CAFILE = "./fibaro_server.crt"
 
 -- Build the luasec TLS config (and optional pin verifier) for an HTTPS Fibaro endpoint.
 -- tls_verify selects the trust model:
---  * "auto" (default): encrypt-only transport (verify="none") plus dynamic application-layer
+--  * "none" (default): encrypt only, never validate (pure Philips Hue model).
+--  * "auto": encrypt-only transport (verify="none") plus dynamic application-layer
 --    CA pinning. Until a CA has been fetched (config.ca_fp unset) this is the bootstrap /
 --    trust-on-first-use connection; once config.ca_fp is present every connection is
 --    validated against it.
---  * "none": encrypt only, never validate. Escape hatch (pure Philips Hue model).
 --  * "bundled": legacy static pin against src/fibaro_server.crt (verify="peer", cafile).
 -- Returns ssl_config, pin_verify (pin_verify is nil unless dynamic pinning is active).
 local function build_https_transport(config, label)
   local prefix = (label and #label > 0) and (label .. " ") or ""
-  local mode = tostring(config.tls_verify or "auto"):lower()
+  local mode = tostring(config.tls_verify or "none"):lower()
 
   if mode == "none" then
     log.info_with({hub_logs = true}, string.format(
@@ -147,7 +147,7 @@ function fibaro_api.new(config, label)
     "[Fibaro] API client for %s -> %s (auth: %s, tls_verify: %s)",
     label, base_url,
     (headers["Authorization"] ~= nil) and "basic" or "none",
-    (config.scheme == "https") and tostring(config.tls_verify or "auto") or "n/a"))
+    (config.scheme == "https") and tostring(config.tls_verify or "none") or "n/a"))
 
   local socket_builder
   if config.scheme == "https" then

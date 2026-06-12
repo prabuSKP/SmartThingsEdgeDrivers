@@ -6,8 +6,6 @@ local commands = require "handlers.commands"
 local discovery = require "discovery"
 local lifecycle = require "handlers.lifecycle"
 
-local MDNS_SCAN_INTERVAL_SECONDS = 300
-
 local fibaro_hc2 = Driver("fibaro", {
   discovery = discovery.discover,
   lifecycle_handlers = {
@@ -56,9 +54,6 @@ end
 if fibaro_hc2.datastore.inflight_creates == nil then
   fibaro_hc2.datastore.inflight_creates = {}
 end
-
--- fibaro_hc2:call_with_delay(3, discovery.do_mdns_scan, "Fibaro HC3 mDNS initial scan")
--- fibaro_hc2:call_on_schedule(MDNS_SCAN_INTERVAL_SECONDS, discovery.do_mdns_scan, "Fibaro HC3 mDNS scan")
 
 log.info_with({hub_logs = true}, "[Fibaro] Starting driver")
 fibaro_hc2:run()

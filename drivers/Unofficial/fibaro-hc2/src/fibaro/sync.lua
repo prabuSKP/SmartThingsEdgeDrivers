@@ -22,6 +22,11 @@ local CREATE_SPACING_SECONDS = 0.15      -- pause between consecutive create cal
 local MAX_CREATE_ATTEMPTS = 8            -- give up on a child after this many failures
 local FULL_SYNC_EVERY_N_POLLS = 20       -- periodic full reconcile (~10 min at 30s poll)
 local INFLIGHT_TTL_SECONDS = 600         -- forget submitted-but-unmaterialized creates
+-- A full sync emits switch/power/energy state for every existing child. On a large hub that
+-- burst blows the platform's device_update.total rate limit (100 updates / 500ms) and drops
+-- updates, so we pause briefly every batch of emitting devices to spread the events out.
+local EMIT_PACING_BATCH = 15             -- existing children emitted before a pacing pause
+local EMIT_PACING_SECONDS = 0.3          -- pause length between emit batches
 
 local function value_matches_switch(value, expected_on)
   local is_on = utils.value_is_truthy(value)
@@ -161,10 +166,10 @@ local function get_bridge_endpoint_config(bridge)
     (host_source == "serial-mdns") and (", serial=" .. serial) or ""))
 
   -- TLS trust model for HTTPS (only relevant when scheme=https):
-  --  * "auto" (default): dynamic CA pin — fetch the hub CA and validate against it.
-  --  * "none": encrypt-only fallback, no validation.
+  --  * "none" (default): encrypt-only, no certificate validation.
+  --  * "auto": dynamic CA pin — fetch the hub CA and validate against it.
   --  * "bundled": legacy static pin against src/fibaro_server.crt.
-  local tls_verify = tostring(get_pref_override(prefs.tlsVerify) or "auto"):lower()
+  local tls_verify = tostring(get_pref_override(prefs.tlsVerify) or "none"):lower()
 
   -- Pinned CA fingerprint captured by maybe_provision_ca on first HTTPS contact. When
   -- present (and tls_verify="auto") the api layer enforces it after every handshake.
@@ -303,8 +308,8 @@ local function maybe_provision_ca(bridge, api)
   if not endpoint or endpoint.scheme ~= "https" then
     return
   end
-  if (endpoint.tls_verify or "auto") ~= "auto" then
-    return  -- "none"/"bundled" do not use the dynamic pin
+  if (endpoint.tls_verify or "none") ~= "auto" then
+    return  -- "none" (default) / "bundled" do not use the dynamic pin
   end
   if bridge:get_field(fields.BRIDGE_CA_FP) then
     return  -- already pinned
@@ -618,19 +623,12 @@ end
 
 local function ensure_child_device(driver, bridge, mapped, existing_child)
   if existing_child then
-    -- SmartThings keeps whatever profile a device was created with; updating the mapper
-    -- alone never migrates an already-created child. Re-assign the profile when the
-    -- mapping now resolves to a different one -- e.g. a "-metered" variant became
-    -- available, or power/energy metering was newly detected on the hub -- so the new
-    -- card (powerMeter/energyMeter) actually shows up. device.profile.id is the profile
-    -- name, so this only fires on a real change and never loops on already-correct devices.
-    local current_profile = existing_child.profile and existing_child.profile.id
-    if mapped.profile and current_profile ~= mapped.profile then
-      log.info_with({hub_logs = true}, string.format(
-        "[Fibaro] Child %s profile change: %s -> %s; updating device metadata",
-        existing_child.label, tostring(current_profile), tostring(mapped.profile)))
-      existing_child:try_update_metadata({ profile = mapped.profile })
-    end
+    -- A child's profile is set once at creation (from the full /api/devices sync where the
+    -- power/energy data is present, so metered devices get the correct "-metered" profile)
+    -- and is intentionally NOT re-evaluated here. Re-assigning the profile on every sync
+    -- via device.profile.id (which is a UUID, not the profile name) fired on every device
+    -- every poll and could downgrade a metered device to the plain variant when a later
+    -- sync resolved it differently -- so we leave an existing child's profile untouched.
     emit_child_state(existing_child, mapped.raw, mapped.kind)
     return existing_child
   end
@@ -827,6 +825,7 @@ function sync.sync_bridge_inventory(driver, bridge)
     end
   end
 
+  local emitted_count = 0
   for _, normalized_device in ipairs(normalized_devices) do
     log.info_with({hub_logs = true}, string.format(
       "[Fibaro] Normalized device: id=%s, name=%s, type=%s, value=%s, level=%s, dead=%s, roomId=%s",
@@ -838,7 +837,7 @@ function sync.sync_bridge_inventory(driver, bridge)
       tostring(normalized_device.dead),
       tostring(normalized_device.room_id)
     ))
-    
+
     local parent_id = normalized_device.parent_id or 0
     local parent_is_multichannel = parent_id > 1 and (parent_channel_counts[parent_id] or 0) > 1
     local mapped, map_err = mapper.map_device(normalized_device, rooms, parent_is_multichannel)
@@ -851,7 +850,16 @@ function sync.sync_bridge_inventory(driver, bridge)
         tostring(mapped.label)
       ))
       seen[mapped.key] = true
-      ensure_child_device(driver, bridge, mapped, children_by_key[mapped.key])
+      -- Returns the existing child when state was emitted, or nil when the device is new
+      -- (only queued for creation, no emit). Pace only the emitting devices so a full sync
+      -- does not burst past the device_update rate limit (see EMIT_PACING_* above).
+      local emitted_child = ensure_child_device(driver, bridge, mapped, children_by_key[mapped.key])
+      if emitted_child ~= nil then
+        emitted_count = emitted_count + 1
+        if emitted_count % EMIT_PACING_BATCH == 0 then
+          socket.sleep(EMIT_PACING_SECONDS)
+        end
+      end
     else
       log.info_with({hub_logs = true}, string.format("[Fibaro] Skipping device %s: %s", tostring(normalized_device.id), tostring(map_err)))
     end

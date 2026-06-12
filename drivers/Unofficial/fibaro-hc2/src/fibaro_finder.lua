@@ -20,21 +20,28 @@ local utils = require "utils"
 
 local finder = {}
 
--- Fibaro find-server ports (manual: "Fibaro find server  44444, 9999").
-local FINDER_PORTS = { 44444, 9999 }
+-- Fibaro find-server port. Packet capture (june_12) showed the HC replies only on 44444
+-- (port 9999 yielded nothing), and it ACKs essentially any datagram there, so a single probe
+-- on 44444 is enough -- no need for the original 5-probe x 2-port sweep.
+local FINDER_PORTS = { 44444 }
 local LIMITED_BROADCAST = "255.255.255.255"
-local DEFAULT_LISTEN_WINDOW = 6 -- seconds to listen for replies after probing
-local MAX_HEX_BYTES = 512        -- cap hex/ascii dumps so a huge reply cannot flood the log
+local DEFAULT_LISTEN_WINDOW = 3.0 -- total seconds to probe + listen per sweep
+local MAX_HEX_BYTES = 64           -- cap hex/ascii dumps so a reply cannot flood the log
 
--- Candidate request payloads. The real find-server request is not captured yet, so we probe
--- with a few plausible forms and log each one. TUNE THIS LIST once a packet capture reveals
--- the actual request bytes (then drop the rest).
+-- Broadcast-rate controls. Frequent broadcast can trip switch/AP "storm control" or Wi-Fi
+-- multicast limiting and start getting dropped, so we keep the volume low: retry with an
+-- EXPONENTIAL BACKOFF, hard-CAP the number of probe rounds per sweep, and STOP broadcasting
+-- as soon as a controller replies (then listen briefly for any others).
+local RESEND_INTERVAL_START = 0.3   -- first retry gap
+local RESEND_INTERVAL_MAX = 1.2     -- backoff ceiling
+local RESEND_BACKOFF = 1.6          -- per-round multiplier
+local MAX_BROADCAST_ROUNDS = 6      -- never send more than this many probe rounds per sweep
+local FOUND_GRACE_SECONDS = 0.5     -- after the first reply, listen this long for other HCs, then end
+
+-- Request payload. The HC's reply is "ACK <serial> <mac>" to any datagram on 44444, so the
+-- exact bytes do not matter; "discover" is a readable choice.
 local PROBE_PAYLOADS = {
-  { name = "empty",        data = "" },
-  { name = "newline",      data = "\r\n" },
-  { name = "FIBARO",       data = "FIBARO" },
-  { name = "discover",     data = "discover" },
-  { name = "json-discover", data = '{"action":"discover"}' },
+  { name = "discover", data = "discover" },
 }
 
 -- =====================================================================================
@@ -167,7 +174,7 @@ end
 -- derive the subnet-directed broadcast; `window` is the listen duration in seconds.
 function finder.scan(driver, window)
   window = window or DEFAULT_LISTEN_WINDOW
-  log.info_with({hub_logs = true}, "[Fibaro] ========== Starting Fibaro find-server discovery (UDP 44444/9999) ==========")
+  log.info_with({hub_logs = true}, "[Fibaro] ========== Starting Fibaro find-server discovery (UDP 44444) ==========")
 
   local sock, err = socket.udp()
   if not sock then
@@ -196,41 +203,74 @@ function finder.scan(driver, window)
   end
   log.info_with({hub_logs = true}, string.format(
     "[Fibaro] finder: broadcast targets=[%s] ports=[%s]",
-    table.concat(targets, ", "), table.concat({44444, 9999}, ", ")))
+    table.concat(targets, ", "), table.concat(FINDER_PORTS, ", ")))
 
-  -- Fire every (target x port x probe). Verbose on purpose so we can see exactly what was sent.
-  for _, target in ipairs(targets) do
-    for _, port in ipairs(FINDER_PORTS) do
-      for _, probe in ipairs(PROBE_PAYLOADS) do
-        local sent, send_err = sock:sendto(probe.data, target, port)
-        if sent then
-          log.info_with({hub_logs = true}, string.format(
-            "[Fibaro] finder: SENT probe '%s' -> %s:%d (len=%d, hex=%s)",
-            probe.name, target, port, #probe.data,
-            (#probe.data > 0) and to_hex(probe.data) or "<empty>"))
-        else
-          log.warn_with({hub_logs = true}, string.format(
-            "[Fibaro] finder: send '%s' -> %s:%d FAILED: %s", probe.name, target, port, tostring(send_err)))
+  -- Broadcast the probe to every target/port. UDP is lossy, so a single send is unreliable --
+  -- the receive loop re-broadcasts with backoff until a controller replies (see below).
+  local function broadcast_probes(verbose)
+    for _, target in ipairs(targets) do
+      for _, port in ipairs(FINDER_PORTS) do
+        for _, probe in ipairs(PROBE_PAYLOADS) do
+          local sent, send_err = sock:sendto(probe.data, target, port)
+          if verbose then
+            if sent then
+              log.info_with({hub_logs = true}, string.format(
+                "[Fibaro] finder: SENT probe '%s' -> %s:%d (len=%d)", probe.name, target, port, #probe.data))
+            else
+              log.warn_with({hub_logs = true}, string.format(
+                "[Fibaro] finder: send '%s' -> %s:%d FAILED: %s", probe.name, target, port, tostring(send_err)))
+            end
+          end
         end
       end
     end
   end
 
-  -- Listen for replies (to our ephemeral source port) for the whole window, deduped by IP.
+  -- Probe + listen. We re-broadcast with exponential backoff (capped) ONLY until a controller
+  -- replies; once one does we stop sending and just listen for a short grace period. This keeps
+  -- broadcast volume minimal so storm control / Wi-Fi multicast limiting never starts dropping
+  -- our packets. The HC re-sends the same ACK, so we dedup by source IP before parsing/logging.
   local deadline = socket.gettime() + window
   local seen = {}
   local candidates = {}
   local response_count = 0
+  local rounds = 0
+  local interval = RESEND_INTERVAL_START
+  local next_send = 0          -- 0 => send immediately on the first iteration
+  local stop_sending = false   -- set once a controller replies
 
   while socket.gettime() < deadline do
-    sock:settimeout(math.max(0, deadline - socket.gettime()))
+    local now = socket.gettime()
+
+    -- Send another probe round only while no one has answered and we are under the cap.
+    if not stop_sending and rounds < MAX_BROADCAST_ROUNDS and now >= next_send then
+      broadcast_probes(rounds == 0)  -- log only the first round
+      rounds = rounds + 1
+      next_send = now + interval
+      interval = math.min(interval * RESEND_BACKOFF, RESEND_INTERVAL_MAX)
+    end
+
+    -- Receive in short slices so we can loop back to re-broadcast / re-check the deadline.
+    local slice = math.min(0.25, deadline - socket.gettime())
+    sock:settimeout(math.max(0, slice))
     local payload, rip, rport = sock:receivefrom()
     if payload then
       response_count = response_count + 1
-      local candidate = candidate_from_response(payload, rip, rport)
-      if candidate and not seen[candidate.host] then
-        seen[candidate.host] = true
-        table.insert(candidates, candidate)
+      if not seen[rip] then
+        local candidate = candidate_from_response(payload, rip, rport)
+        if candidate then
+          seen[rip] = true
+          table.insert(candidates, candidate)
+        end
+      end
+      -- Got an answer: stop broadcasting and shrink the window to a brief grace period so any
+      -- other controllers that already received our probes can still reply.
+      if not stop_sending and #candidates > 0 then
+        stop_sending = true
+        deadline = math.min(deadline, socket.gettime() + FOUND_GRACE_SECONDS)
+        log.info_with({hub_logs = true}, string.format(
+          "[Fibaro] finder: controller replied after %d probe round(s); halting broadcasts, listening %.1fs more",
+          rounds, FOUND_GRACE_SECONDS))
       end
     elseif rip ~= "timeout" then
       log.info_with({hub_logs = true}, string.format("[Fibaro] finder: receive ended: %s", tostring(rip)))

@@ -1,5 +1,4 @@
 local log = require "log"
-local mdns = require "st.mdns"
 local socket = require "cosock.socket"
 
 local fields = require "fields"
@@ -7,10 +6,6 @@ local utils = require "utils"
 local discovery_provider = require "discovery_provider"
 
 local discovery = {}
-
-
-local MDNS_DOMAIN = "local"
-local MDNS_SERVICE_TYPE = "_http._tcp"
 
 local function bridge_by_dni(driver, dni)
   for _, device in ipairs(driver:get_devices()) do
@@ -22,76 +17,39 @@ local function bridge_by_dni(driver, dni)
   return nil
 end
 
-local function byte_array_to_plain_text(byte_array)
-  return string.char(table.unpack(byte_array))
-end
-
-local function text_list_for_found_item(found_item)
-  local text_list = {}
-
-  for _, raw_text in pairs(((found_item or {}).txt or {}).text or {}) do
-    table.insert(text_list, byte_array_to_plain_text(raw_text))
-  end
-
-  return text_list
-end
-
-local function get_text_by_srvname(srvname, discovery_responses)
-  for _, answer_item in pairs(discovery_responses.answers or {}) do
-    if answer_item.kind.TxtRecord ~= nil and answer_item.name == srvname then
-      return answer_item.kind.TxtRecord.text
+local function has_existing_bridge(driver)
+  for _, device in ipairs(driver:get_devices()) do
+    if utils.is_bridge(device) then
+      return true
     end
   end
 
-  return nil
+  return false
 end
 
-local function get_srvname_by_hostname(hostname, discovery_responses)
-  for _, answer_item in pairs(discovery_responses.answers or {}) do
-    if answer_item.kind.SrvRecord ~= nil and answer_item.kind.SrvRecord.target == hostname then
-      return answer_item.name
-    end
+-- Remove the manual-entry placeholder once the finder has actually discovered the HC3, so the
+-- user is never left with an empty "Fibaro HC3" card next to the real one. Only deletes the
+-- placeholder while it is UNCONFIGURED (no host / no username): a manual bridge the user has
+-- already set up may be in active use and must never be deleted.
+local function remove_unconfigured_manual_bridge(driver)
+  local manual = bridge_by_dni(driver, discovery_provider.MANUAL_BRIDGE_DNI)
+  if manual == nil then
+    return
   end
 
-  return nil
-end
-
-local function get_hostname_by_ip(ip, discovery_responses)
-  for _, answer_item in pairs(discovery_responses.answers or {}) do
-    if answer_item.kind.ARecord ~= nil and answer_item.kind.ARecord.ipv4 == ip then
-      return answer_item.name
-    end
+  local prefs = manual.preferences or {}
+  local host = utils.trim(tostring(prefs.host or ""))
+  local username = utils.trim(tostring(prefs.username or ""))
+  if host ~= "" or username ~= "" then
+    return  -- user-configured; leave it alone
   end
 
-  return nil
-end
-
-local function find_text_in_answers_by_ip(ip, discovery_responses)
-  local hostname = get_hostname_by_ip(ip, discovery_responses)
-  local srvname = hostname and get_srvname_by_hostname(hostname, discovery_responses) or nil
-  local answer_text = srvname and get_text_by_srvname(srvname, discovery_responses) or nil
-  local text_list = {}
-
-  for _, raw_text in pairs(answer_text or {}) do
-    table.insert(text_list, byte_array_to_plain_text(raw_text))
+  if type(driver.try_delete_device) == "function" then
+    log.info_with({hub_logs = true},
+      "[Fibaro] HC3 discovered by finder; removing the unconfigured manual-entry placeholder")
+    driver:try_delete_device(manual.id)
   end
-
-  return text_list
 end
-
-local function parse_txt_items(text_list)
-  local parsed = {}
-
-  for _, item in ipairs(text_list or {}) do
-    local key, value = tostring(item):match("^([^=]+)=(.*)$")
-    if key and value then
-      parsed[key] = value
-    end
-  end
-
-  return parsed
-end
-
 
 local function cache_bridge_metadata(driver, bridge_data)
   driver.datastore.pending_bridge_data = driver.datastore.pending_bridge_data or {}
@@ -140,7 +98,7 @@ function discovery.apply_pending_bridge_metadata(driver, device)
   end
 end
 
-local function create_or_update_mdns_bridge(driver, bridge_data)
+local function create_or_update_bridge(driver, bridge_data)
   local existing = bridge_by_dni(driver, bridge_data.device_network_id)
   if existing ~= nil then
     set_bridge_identity_fields(existing, bridge_data)
@@ -159,87 +117,54 @@ local function create_or_update_mdns_bridge(driver, bridge_data)
   })
 end
 
-
-
-function discovery.do_mdns_scan(driver)
-  log.info_with({hub_logs = true}, "[Fibaro] Starting mDNS scan for Fibaro HC3 devices")
-  
-  local discovery_responses, err = mdns.discover(MDNS_SERVICE_TYPE, MDNS_DOMAIN)
-  if err ~= nil then
-    log.warn_with({hub_logs = true}, string.format("[Fibaro] HC3 mDNS discovery failed: %s", tostring(err)))
-    return
-  end
-
-  -- Log raw discovery responses for debugging
-  local json = require "st.json"
-  local raw_response_str = ""
-  if discovery_responses then
-    local ok, json_str = pcall(json.encode, discovery_responses)
-    if ok then
-      raw_response_str = json_str
-    else
-      raw_response_str = tostring(discovery_responses)
-    end
-  end
-  log.info_with({hub_logs = true}, string.format("[Fibaro] Raw mDNS discovery responses: %s", raw_response_str))
-
-  local found_count = #(discovery_responses or {}).found or 0
-  log.info_with({hub_logs = true}, string.format("[Fibaro] mDNS scan found %d responses", found_count))
-
-  -- Log ALL raw mDNS responses (including non-Fibaro)
-  for i, found_item in ipairs((discovery_responses or {}).found or {}) do
-    log.info_with({hub_logs = true}, string.format(
-      "[Fibaro] Raw mDNS response #%d: service_type=%s, name=%s, host=%s, port=%s",
-      i,
-      tostring((found_item.service_info or {}).service_type),
-      tostring((found_item.service_info or {}).name),
-      tostring((found_item.host_info or {}).address),
-      tostring((found_item.service_info or {}).port)
-    ))
-  end
-
-  for _, found_item in ipairs((discovery_responses or {}).found or {}) do
-    local candidate = discovery_provider.normalize_candidate(found_item, discovery_responses or {})
-    if candidate ~= nil then
-      log.info_with({hub_logs = true}, string.format(
-        "[Fibaro] Discovered Fibaro HC3 via mDNS: serial=%s host=%s port=%s",
-        tostring(candidate.serial_number),
-        tostring(candidate.host),
-        tostring(candidate.port)
-      ))
-      create_or_update_mdns_bridge(driver, candidate)
-    end
-  end
-  
-  log.info_with({hub_logs = true}, "[Fibaro] mDNS scan completed")
-end
-
 function discovery.discover(driver, _, should_continue)
   log.info_with({hub_logs = true}, "[Fibaro] ========================================")
-  log.info_with({hub_logs = true}, "[Fibaro] Starting Fibaro Discovery Loop with Fallback")
+  log.info_with({hub_logs = true}, "[Fibaro] Starting Fibaro find-server discovery")
   log.info_with({hub_logs = true}, "[Fibaro] ========================================")
-  
-  while should_continue() do
-    local devices = discovery_provider.discover_with_fallback(driver, {})
 
-    log.info_with({hub_logs = true}, string.format("[Fibaro] Processing %d discovered devices", #devices))
-    
-    for i, device in ipairs(devices) do
-      log.info_with({hub_logs = true}, string.format(
-        "[Fibaro] Creating/updating device #%d: dni=%s, host=%s, port=%d, source=%s",
-        i,
-        tostring(device.device_network_id),
-        tostring(device.host),
-        device.port,
-        tostring(device.discovery_source)
-      ))
-      create_or_update_mdns_bridge(driver, device)
+  -- Loop-scoped flags. found_controller: did the finder ever locate the HC3 this scan?
+  -- manual_created: have we already placed the fallback card this scan? Both keep the manual
+  -- fallback to a single placeholder.
+  local found_controller = false
+  local manual_created = false
+
+  while should_continue() do
+    local devices = discovery_provider.discover_via_finder(driver)
+
+    if #devices > 0 then
+      found_controller = true
+      for i, device in ipairs(devices) do
+        log.info_with({hub_logs = true}, string.format(
+          "[Fibaro] Creating/updating bridge #%d: dni=%s, host=%s, port=%d, source=%s",
+          i,
+          tostring(device.device_network_id),
+          tostring(device.host),
+          device.port,
+          tostring(device.discovery_source)
+        ))
+        create_or_update_bridge(driver, device)
+      end
+      -- The HC3 is found: drop any unconfigured manual placeholder (created this scan after an
+      -- early finder miss, or left over from a prior scan) so only the real card remains.
+      remove_unconfigured_manual_bridge(driver)
+      manual_created = false
+    elseif not found_controller and not manual_created and not has_existing_bridge(driver) then
+      -- Finder found nothing yet and no Fibaro bridge exists. Create the manual-entry card
+      -- NOW, INSIDE the scan window (while should_continue() is true) -- a try_create_device
+      -- issued after the window closes is not reliably honored by the platform, which is why
+      -- the card never appeared before. The found_controller / manual_created guards keep it
+      -- to a single placeholder and avoid duplicating an existing or just-found bridge.
+      log.info_with({hub_logs = true}, "[Fibaro] Fibaro find server found no devices; creating manual-entry fallback bridge")
+      create_or_update_bridge(driver, discovery_provider.build_manual_bridge())
+      manual_created = true
     end
-    
+
     socket.sleep(1.0)
   end
-  
-  log.info_with({hub_logs = true}, "[Fibaro] Discovery loop ended")
+
+  log.info_with({hub_logs = true}, string.format(
+    "[Fibaro] Discovery loop ended (found_controller=%s, manual_created=%s)",
+    tostring(found_controller), tostring(manual_created)))
 end
 
 return discovery
