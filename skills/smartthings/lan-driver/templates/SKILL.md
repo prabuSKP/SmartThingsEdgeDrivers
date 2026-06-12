@@ -50,7 +50,7 @@ Ensure your project folder matches this layout:
 my-bridge-driver/
 ├── src/                         # ← ALL .lua files live here, nowhere else
 │   ├── init.lua                 # Main driver entrypoint
-│   ├── discovery.lua            # SSDP/mDNS & Manual Discovery
+│   ├── discovery.lua            # discovery loop: vendor find-server / mDNS + manual fallback
 │   ├── lifecycle.lua            # added/init/infoChanged/removed handlers
 │   ├── fields.lua               # Datastore Field Constants
 │   ├── utils.lua                # Helper utilities
@@ -68,7 +68,7 @@ my-bridge-driver/
 │   ├── bridge.yml               # Parent device profile
 │   └── switch.yml               # Child device profile (example)
 ├── config.yml                   # Driver packaging manifest
-└── search-parameters.yml        # mDNS/SSDP search targets (optional)
+└── search-parameters.yml        # mDNS/SSDP search targets (optional; N/A for UDP find-server hubs)
 ```
 
 **`handlers/`, `vendor/`, and `lunchbox/` are subdirectories of `src/`, not of the project
@@ -371,9 +371,11 @@ function discovery.discover(driver, opts, should_continue)
   end
 
   while should_continue() do
-    -- Add mDNS/SSDP scans here. Validate each result, then reconcile by DNI/serial/host
+    -- Add the auto-discovery scan here — mDNS/SSDP, OR a vendor UDP "find-server" broadcast
+    -- for hubs that advertise neither (e.g. Fibaro HC2/HC3 on :44444; see
+    -- discovery/find-server-udp). Validate each result, then reconcile by DNI/serial/host
     -- (update the existing placeholder in place, else create exactly one). For example:
-    --   discovery.do_mdns_scan(driver)
+    --   discovery.do_finder_scan(driver)   -- or discovery.do_mdns_scan(driver)
 
     if usable_bridge_exists(driver) then
       -- Real/configured bridge exists → drop the stale unconfigured stub, then stop.

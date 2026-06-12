@@ -78,6 +78,7 @@ Load the appropriate sub-skill:
 |---|---|---|
 | mDNS (Bonjour) | `smartthings/lan-driver/discovery/mdns-analysis` | Device advertises `_http._tcp` or similar service |
 | SSDP (UPnP) | `smartthings/lan-driver/discovery/ssdp-analysis` | Device advertises UPnP services |
+| Vendor find-server (UDP broadcast) | `smartthings/lan-driver/discovery/find-server-udp` | Hub has a proprietary UDP discovery port but no SSDP/browsable mDNS (e.g. Fibaro HC2/HC3 on :44444) |
 | Manual IP Entry | `smartthings/lan-driver/discovery/hub-discovery` | No auto-discovery available |
 | Combined | `smartthings/lan-driver/discovery/hub-discovery` | Multiple discovery methods |
 
@@ -142,8 +143,8 @@ A complete LAN bridge driver follows this structure:
 my-driver/
 ├── src/
 │   ├── init.lua                 # Driver entrypoint
-│   ├── discovery.lua            # mDNS/SSDP/manual discovery
-│   ├── discovery_provider.lua   # Discovery implementation details
+│   ├── discovery.lua            # discovery loop: vendor find-server / mDNS + manual fallback
+│   ├── discovery_provider.lua   # Discovery implementation details (finder tier + manual bridge)
 │   ├── handlers/
 │   │   ├── commands.lua         # Capability command handlers
 │   │   └── lifecycle.lua        # added/init/removed handlers

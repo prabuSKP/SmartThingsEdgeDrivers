@@ -128,6 +128,16 @@ end
 > `smartthings/lan-driver/bridge/hub-event-sync` §8 (Rate-Limit-Safe Bulk Child Creation).
 > `cache_child_metadata` then runs at *drain* time (just before the actual
 > `try_create_device`), not at enqueue time.
+>
+> **When you adopt the queue, three patterns are mandatory** (all in `hub-event-sync` §8) —
+> skipping any one produces the classic *"I have to pull-to-refresh the bridge card several
+> times before all devices appear"* bug:
+> 1. **Drain via a self-scheduling `sync.drain_pending`, never a bare `drain_create_queue`**
+>    (§8a) — a one-shot drain materialises only one batch per refresh.
+> 2. **Cascade-drain from `device_added`** (§8b) — kick the next batch the moment a create
+>    completes, instead of waiting for the next poll tick.
+> 3. **TTL-bound the in-flight guard** (§8c) — a bare `inflight[key] ~= nil` check strands a
+>    device forever if a cloud glitch swallows its `device_added`; evict after a TTL and retry.
 
 ### Metadata Fields Reference
 
@@ -388,5 +398,5 @@ inside one device object.
 4. **Persist all fields** — use `{persist = true}` for hub restart recovery
 5. **Dual encoding** — encode room info in both VPL and label as safety net
 6. **Stale cleanup** — always reconcile children on full inventory sync
-7. **Pace bulk creates** — enqueue + drain with backoff for large hubs (see `hub-event-sync` §8); never fire 100s of `try_create_device` calls at once
+7. **Pace bulk creates, drained self-schedulingly** — enqueue + drain with backoff for large hubs (see `hub-event-sync` §8); never fire 100s of `try_create_device` calls at once, and never drain with a single bare `drain_create_queue` — use `sync.drain_pending` + a `device_added` cascade (§8a/§8b) so devices finish creating without repeated pull-to-refresh, and TTL-bound the in-flight guard (§8c)
 8. **One child per *real* channel** — filter on the hub's `visible`/hidden flag first (drops phantom sub-endpoints, hidden roots, hidden secondaries), then drop the `.0` aggregation node of multi-channel modules. Never decide what to surface from the device-name pattern alone — verify against a real device dump.

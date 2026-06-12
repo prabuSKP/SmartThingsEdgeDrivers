@@ -92,14 +92,15 @@ preferences:
       default: ""
   - title: "Protocol"
     name: "scheme"
-    description: "HTTP or HTTPS"
+    description: "Connection protocol. Auto-detect uses the value found via mDNS. Many HTTPS hubs (e.g. Fibaro HC3) are detected automatically."
     required: false
     preferenceType: "enumeration"
     definition:
       options:
+        auto: "Auto-detect (recommended)"
         http: "HTTP"
         https: "HTTPS"
-      default: "http"
+      default: "auto"
   - title: "Poll Interval (seconds)"
     name: "pollInterval"
     description: "How often to poll for device state changes"
@@ -162,33 +163,54 @@ end
 
 The bridge endpoint (host, port, scheme) can come from multiple sources with a priority cascade.
 
-> **⚠️ Empty-string trap (causes "connects to localhost instead of the hub").** An empty
-> string is **truthy** in Lua, so `value or "http"` does **NOT** replace `""` — only `nil`/`false`.
-> A bridge profile usually has no `scheme` preference and a manual placeholder never gets a
-> `bridge_scheme` field, so a naïve `prefs.scheme or field or "http"` resolves to `""`. That
-> empty scheme makes `build_base_url` emit `"://host:port"`, which `force_url_table` cannot
-> parse — it silently falls back to **`host = "localhost"`**, and every API call then hits the
-> hub itself instead of the target device. **Always default scheme with an explicit `== ""`
-> check, never with `or`.** And give the bridge profile a `scheme` (http/https) preference so
-> the value is user-selectable and never empty.
+> **⚠️ Non-empty default trap (mDNS-detected scheme/port silently ignored).** If the scheme
+> preference has default `"http"` (non-empty), the guard `if not scheme or scheme == ""` is
+> always `false`, so `bridge:get_field("bridge_scheme")` (set to `"https"` by mDNS for port-443
+> hubs) is NEVER reached. The driver always connects via `http:80` even when the hub requires
+> `https:443`. Same problem for port: default `80` makes `tonumber(prefs.port)` always truthy
+> so the mDNS-detected `BRIDGE_PORT` field is never used.
+>
+> **Fix:** use `"auto"` as the scheme default so the code can distinguish "user hasn't chosen yet"
+> from "user explicitly chose http". For port, treat `80` as "not explicitly overridden" and
+> let the mDNS-detected field take priority.
+>
+> **Historical note:** the old `== ""` empty-string guard is still needed for `host` (whose
+> default really is `""`), but is insufficient alone for scheme/port whose defaults are non-empty.
 
 ```lua
 local function get_bridge_endpoint_config(bridge)
   local prefs = bridge.preferences or {}
 
-  -- Host: user pref first, then the discovered field. Empty = unconfigured.
+  -- host: profile default is "" so empty means "not configured yet"
   local host = prefs.host
   if not host or host == "" then host = bridge:get_field("bridge_host") end
   if not host or host == "" then return nil, "bridge host unavailable" end
 
-  -- Scheme: MUST check `== ""` explicitly (empty string is truthy). Default to "http".
-  local scheme = prefs.scheme
-  if not scheme or scheme == "" then scheme = bridge:get_field("bridge_scheme") end
-  if not scheme or scheme == "" then scheme = "http" end
+  -- scheme: profile default is "auto". Explicit "http"/"https" overrides the
+  -- mDNS-detected field; "auto" (or anything else) falls through to the field.
+  local pref_scheme = prefs.scheme or "auto"
+  local field_scheme = bridge:get_field("bridge_scheme") or ""
+  local scheme
+  if pref_scheme == "https" or pref_scheme == "http" then
+    scheme = pref_scheme   -- explicit user choice
+  elseif field_scheme ~= "" then
+    scheme = field_scheme  -- use mDNS-detected value (e.g. "https" for HC3)
+  else
+    scheme = "http"        -- safe fallback before any discovery has run
+  end
 
-  -- Port: pref, then field, then scheme-appropriate default.
-  local port = tonumber(prefs.port) or tonumber(bridge:get_field("bridge_port"))
-  if not port then port = (scheme == "https") and 443 or 80 end
+  -- port: profile default 80. Only override the mDNS-detected field when the
+  -- user has explicitly changed the port away from the default (80).
+  local field_port = tonumber(bridge:get_field("bridge_port"))
+  local pref_port  = tonumber(prefs.port)
+  local port
+  if pref_port ~= nil and pref_port ~= 80 then
+    port = pref_port   -- explicit non-default user choice
+  elseif field_port ~= nil then
+    port = field_port  -- use mDNS-detected value (e.g. 443)
+  else
+    port = (scheme == "https") and 443 or 80
+  end
 
   return { scheme = scheme, host = host, port = port }, nil
 end
@@ -667,7 +689,7 @@ end
 ## Key Design Principles
 
 1. **Bootstrap before inventory** — always validate hub identity before syncing devices
-2. **Preferences cascade** — user overrides > auto-detected > defaults
+2. **Preferences cascade** — for `host`: user pref > mDNS field > fail. For `scheme`/`port`: explicit non-default user pref > mDNS field > hard default. Never let a non-empty pref default (e.g. `"http"`, `80`) shadow an mDNS-detected field value.
 3. **Adapter normalization** — never trust raw vendor API shapes; normalize first
 4. **Field persistence** — all critical config survives hub restarts with `{persist = true}`
 5. **Structured metadata** — encode room/label info in `vendor_provided_label` for downstream tools

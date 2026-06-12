@@ -86,9 +86,33 @@ local function connect_secure_socket(ip, port)
 end
 ```
 
-### Production: validate the server — `verify="peer"` + pinned `cafile` (PREFERRED over bypass)
+### Edge sandbox: app-layer fingerprint pinning (PREFERRED when you cannot bundle/write a cafile)
 
-`verify="none"` encrypts but does **not authenticate** the hub — it accepts *any* certificate, so it is **MITM-vulnerable on the LAN**. Treat it as a logged fallback, not the default. The production pattern (used by SmartThings' own `jbl` driver, and Aqara/DeepSmart) **pins the hub certificate**: `verify="peer"` + a `cafile` cert **bundled in `src/`**.
+`verify="none"` encrypts but does **not authenticate** the hub — it accepts *any* certificate, so it is **MITM-vulnerable on the LAN**. The textbook fix is `verify="peer"` + a bundled `cafile` (next section). But **two Edge-runtime constraints often make that impossible**, and you must then validate at the application layer instead:
+
+1. The hub's CA/leaf is **not known at build time** (per-device self-signed, or only fetchable from the hub itself), so there is nothing to bundle.
+2. The sandbox **cannot write a `cafile` to disk at runtime**, and `luasec.loadcertificate` is **not exposed on the hub** (confirmed from `hub-agent.log`) — so you cannot install a fetched CA into luasec either.
+
+**Production pattern under these constraints (the Fibaro HC3 path, Philips Hue precedent):** keep the luasec transport `verify="none"` (encrypt-only) and **pin the certificate fingerprint at the application layer**, right after the TLS handshake:
+
+- On first contact, fetch the hub's CA from a hub endpoint (Fibaro: `GET /api/settings/certificates/ca`), compute its **SHA-256 fingerprint** over the DER encoding using **pure-Lua** SHA-256 + base64 (no luasec helper needed), and persist it in `driver.datastore`.
+- On every connection, after the handshake, read the cert(s) the hub presented, fingerprint them, and **refuse the connection on mismatch** (rotation or MITM).
+- Wire this as a `pin_verify` hook the socket builder calls after `dohandshake()` — signature `(sock) -> ok, err`; a false result closes the socket and fails the connect.
+
+```lua
+-- utils.labeled_socket_builder(label, ssl_config, pin_verify):
+--   ssl_config stays { verify = "none", ... }; pin_verify is the app-layer check.
+local pinned_fp = bridge:get_field("ca_fingerprint")          -- persisted on first contact
+local builder = utils.labeled_socket_builder(label,
+  { mode = "client", protocol = "any", verify = "none", options = "all" },
+  cert.make_pin_verify(pinned_fp, label))                     -- (sock) -> ok, err
+```
+
+Expose a `tlsVerify` preference selecting the trust model: **`none`** (encrypt-only, default when no fingerprint is known yet), **`auto`** (fetch + fingerprint-pin the hub CA dynamically), **`bundled`** (validate against a cert shipped in `src/`). See the reference driver's `src/fibaro/cert.lua` and `src/utils.lua` for the complete pure-Lua fingerprint + `pin_verify` implementation. **TOFU (Trust On First Use)** is the same idea: capture the fingerprint on first connect, pin it thereafter.
+
+### Alternative: `verify="peer"` + bundled `cafile` (use when you CAN ship the cert)
+
+When the hub cert/CA **is** known at build time and you can bundle it under `src/`, prefer the simpler luasec-native pinning: `verify="peer"` + a `cafile` cert **bundled in `src/`** (used by SmartThings' own `jbl` driver, and Aqara/DeepSmart). Note this requires luasec to read the `cafile` from the packaged `src/` dir — verify your target runtime honors it (the Fibaro HC3 path above exists precisely because some hubs/runtimes do not).
 
 ```lua
 -- module-level, cf. drivers/SmartThings/jbl/src/jbl/api.lua
@@ -109,9 +133,7 @@ local socket_builder = utils.labeled_socket_builder(label, SSL_CONFIG)
   If `s:`==`i:` (self-signed leaf) bundle **that leaf** — openssl trusts a self-signed cert that is present in the `cafile`. If there is a separate issuer **CA**, bundle the **CA** (one CA validates every device that vendor signs).
 - **Hostname/IP:** `verify="peer"`+`cafile` validates the **chain**, not the hostname — so connecting by IP while the cert CN is a hostname is fine.
 - **Per-device vs shared-CA:** a pinned self-signed leaf validates only that one hub (replace the file per deployment); a shared vendor CA validates all that vendor's hubs.
-- **Expiry:** `verify="peer"` enforces validity dates (an expired hub cert is rejected) — expose a `tlsVerify` (peer/none) **preference** so the user can fall back, with a clear log message. Default to `peer`.
-
-**TOFU (Trust On First Use)** alternative for per-device certs without bundling: on first connect capture the server cert fingerprint, persist it in `driver.datastore`, and verify it matches on every reconnect.
+- **Expiry:** `verify="peer"` enforces validity dates (an expired hub cert is rejected) — expose a `tlsVerify` **preference** so the user can fall back to `none`, with a clear log message. When you ship a known-good cert this can default to `bundled`; when the cert must be learned from the hub, default to `none`/`auto` and use the app-layer pinning above.
 
 ---
 

@@ -52,7 +52,8 @@ State sync ensures SmartThings always reflects the current state of devices on t
 >    `cache_child_metadata`, `build_child_metadata`, `delete_child`, `bridge_has_inventory_config`
 > 2. **`enqueue_child_create`** — must come **before** `ensure_child_device` (which calls it)
 > 3. **`ensure_child_device`** — calls `emit_child_state` (1) and `enqueue_child_create` (2)
-> 4. Public functions last: `sync.drain_create_queue`, `sync.execute_child_action`,
+> 4. Public functions last: `sync.drain_create_queue`, **`sync.drain_pending`** (calls
+>    `sync.drain_create_queue`, so define it after), `sync.execute_child_action`,
 >    `sync.refresh_child`, `sync.poll_bridge`, `sync.sync_bridge_inventory`,
 >    `sync.cancel_bridge_timer`, `sync.start_poll_timer`
 >
@@ -164,7 +165,12 @@ function sync.sync_bridge_inventory(driver, bridge)
     end
   end
 
-  -- 10. Prime the incremental polling cursor
+  -- 10. Drain the create queue — via the self-scheduling helper, NOT a bare
+  --     drain_create_queue (see §8a). This creates the first batch now and
+  --     auto-schedules the rest, so the user never has to pull-to-refresh.
+  sync.drain_pending(driver, bridge)
+
+  -- 11. Prime the incremental polling cursor
   prime_refresh_states_cursor(api, bridge)
 
   return true, nil
@@ -188,6 +194,17 @@ function sync.poll_bridge(driver, bridge)
   if api == nil then
     bridge:offline()
     return nil, api_err
+  end
+
+  -- Drain any queued creates first (self-scheduling — see §8a). NEVER a bare
+  -- drain_create_queue here, or large hubs need repeated pull-to-refresh.
+  sync.drain_pending(driver, bridge)
+
+  -- Periodic full reconcile (§9c) — catches silent late additions.
+  local n = (tonumber(bridge:get_field(fields.POLL_COUNT)) or 0) + 1
+  bridge:set_field(fields.POLL_COUNT, n, { persist = false })
+  if n % FULL_SYNC_EVERY_N_POLLS == 0 then
+    return sync.sync_bridge_inventory(driver, bridge)
   end
 
   local payload, err, status = api:get_refresh_states(last)
@@ -218,10 +235,19 @@ function sync.poll_bridge(driver, bridge)
     if child ~= nil then
       touched[device_id] = child
     else
-      -- Unknown device changed — need full resync
+      -- Unknown device changed — new device exists, need full resync (§9b)
       should_resync = true
     end
     ::continue::
+  end
+
+  -- Honor topology events — primary late-addition path (§9a). A newly paired
+  -- but idle device appears here even when it never shows up in `changes`.
+  for _, event in ipairs(payload.events or {}) do
+    local etype = tostring(event.type or "")
+    if etype:find("DeviceCreated") or etype:find("DeviceRemoved") or etype:find("DeviceModified") then
+      should_resync = true
+    end
   end
 
   -- Refresh only changed children
@@ -480,9 +506,12 @@ in paced batches across poll ticks, retrying failures with backoff. The queue li
 ```lua
 -- Tunables
 local MAX_CREATES_PER_INVENTORY = 25   -- inline budget at end of a full sync
-local MAX_CREATES_PER_POLL      = 10   -- drained each incremental poll
+local MAX_CREATES_PER_POLL      = 25   -- drained each incremental poll (MUST match
+                                       -- MAX_CREATES_PER_INVENTORY — see below)
 local CREATE_SPACING_SECONDS    = 0.15 -- pause between create calls
 local MAX_CREATE_ATTEMPTS       = 8    -- give up after this many failures
+local INFLIGHT_TTL_SECONDS      = 120  -- evict a stuck in-flight create after this
+                                       -- so a cloud glitch cannot permanently strand it
 
 -- ensure_child_device: existing → emit state; new → ENQUEUE (do not create inline)
 local function ensure_child_device(driver, bridge, mapped, existing_child)
@@ -523,28 +552,137 @@ function sync.drain_create_queue(driver, max_count)
 end
 ```
 
-Call `sync.drain_create_queue(driver, MAX_CREATES_PER_INVENTORY)` at the end of a full
-sync, and `sync.drain_create_queue(driver, MAX_CREATES_PER_POLL)` at the top of every
-poll tick. Mark each device `seen` **before** enqueuing so stale-cleanup never deletes a
-device that is only waiting in the queue.
+Mark each device `seen` **before** enqueuing so stale-cleanup never deletes a device that is
+only waiting in the queue.
 
-> **Large hubs (100s of devices): track in-flight creates.** `try_create_device` is async —
-> the child may not appear in `driver:get_devices()` for several seconds. Without a guard, the
-> next poll re-enqueues and re-submits it. Keep a `driver.datastore.inflight_creates` map keyed
-> by `bridge_dni .. "|" .. child_key`: set it to `os.time()` right after a successful
-> `try_create_device`, skip enqueuing any key already in-flight, and clear the entry once the
-> child shows up in `child_devices_for_bridge`. This (alongside the queue's own de-dup) prevents
-> duplicate child devices during the initial bulk create on a busy hub.
+> **❌ DO NOT call `drain_create_queue` directly as the final step of a sync or poll.** A single
+> bare `drain_create_queue(driver, MAX_CREATES_PER_INVENTORY)` drains **at most 25** devices and
+> then returns, leaving the rest stranded in the queue until the *next* poll tick (up to one
+> poll interval later) or a manual pull-to-refresh. On a 50–100 device hub this is the root cause
+> of the **"I have to pull-to-refresh the bridge card several times before all my devices show
+> up"** bug: each refresh only materialises one more batch of 25. **Always drive draining through
+> the self-scheduling `sync.drain_pending` helper below, and add the cascade drain in
+> `device_added`.** These two patterns are mandatory for any bridge that can have more devices
+> than one batch.
+
+### 8a. Self-scheduling drain (REQUIRED — replaces the bare end-of-sync drain)
+
+`sync.drain_pending` drains one batch, then — **if the queue still has items** — reschedules
+itself with `call_with_delay` so the remaining devices are created automatically within seconds,
+with **zero** manual refreshes. It is the only thing the sync/poll paths should call.
+
+```lua
+-- PUBLIC: self-scheduling batch drain. Call this — never bare drain_create_queue — from
+-- the end of sync_bridge_inventory and the top of poll_bridge.
+function sync.drain_pending(driver, bridge)
+  sync.drain_create_queue(driver, MAX_CREATES_PER_INVENTORY)
+  local remaining = driver.datastore.pending_create_queue or {}
+  if #remaining > 0 then
+    -- More queued than one batch — keep going on this bridge's thread until empty.
+    bridge.thread:call_with_delay(2, function()
+      pcall(sync.drain_pending, driver, bridge)
+    end, bridge.id .. "-drain")
+  end
+end
+```
+
+- **End of `sync_bridge_inventory` (step 10):** call `sync.drain_pending(driver, bridge)` — NOT
+  `sync.drain_create_queue(...)`.
+- **Top of `poll_bridge`:** call `sync.drain_pending(driver, bridge)` — NOT
+  `sync.drain_create_queue(driver, MAX_CREATES_PER_POLL)`.
+- Keep `MAX_CREATES_PER_POLL == MAX_CREATES_PER_INVENTORY` (both 25). A smaller poll budget only
+  re-introduces multi-refresh latency now that draining self-schedules; there is no reason for the
+  poll path to drain in smaller batches than the inventory path.
+
+> **Self-scheduling is harmless when the queue is empty:** the `#remaining > 0` guard means the
+> recursion stops the moment the queue drains, so there is no idle timer churn. The `bridge.id ..
+> "-drain"` name makes the in-flight delayed call easy to identify in logs.
+
+### 8b. Cascade drain from `device_added` (REQUIRED)
+
+`try_create_device` is async: SmartThings fires `device_added` for each child seconds later. That
+handler is the *earliest* signal that a create slot has freed up, so it is the right place to kick
+the next batch immediately instead of waiting for `drain_pending`'s 2s timer or the next poll. In
+the **child** branch of your `device_added` lifecycle handler:
+
+```lua
+-- device_added, child branch:
+sync.apply_pending_child_metadata(driver, device)
+local bridge = find_parent_bridge(driver, device)
+if bridge then
+  sync.clean_inflight_creates(driver, bridge)        -- free this child's in-flight slot
+
+  -- CASCADE: if more creates are queued, drain the next batch now (don't wait for the poll).
+  local remaining = driver.datastore.pending_create_queue or {}
+  if #remaining > 0 then
+    bridge.thread:call_with_delay(0.5, function()
+      pcall(sync.drain_pending, driver, bridge)
+    end)
+  end
+end
+```
+
+With 8a + 8b together, a 50-device hub fully populates in **~1–2 seconds with no manual refresh**:
+the inventory drain creates 25 and self-schedules; the first `device_added` events cascade-drain
+the remaining 25; the self-scheduled timer then finds an empty queue and stops.
+
+### 8c. In-flight tracking WITH a TTL (REQUIRED — never a bare nil-check)
+
+`try_create_device` is async, so the child may not appear in `driver:get_devices()` for several
+seconds. Without a guard, the next sync/poll re-enqueues and re-submits it, creating duplicates.
+Keep a `driver.datastore.inflight_creates` map keyed by `bridge_dni .. "|" .. child_key`: set it
+to `os.time()` right after a successful `try_create_device`, and clear the entry once the child
+shows up in `child_devices_for_bridge`.
+
+> **⚠️ The in-flight guard MUST be TTL-bounded — a bare `if inflight[key] ~= nil then return` is a
+> bug.** `try_create_device` can return `ok=true` while SmartThings, due to a cloud glitch, never
+> fires `device_added`. With a bare nil-check the key then stays in `inflight_creates` **forever**,
+> so every future detection cycle (topology event, unknown-id change, periodic reconcile) hits
+> `enqueue_child_create`, sees the stale in-flight key, and silently returns — the device is
+> **permanently missing** and the only recovery is deleting and re-adding the bridge. Always
+> compare the stored timestamp against `INFLIGHT_TTL_SECONDS` and evict on expiry so the create is
+> retried:
+
+```lua
+-- Inside enqueue_child_create, BEFORE inserting into the queue:
+local inflight = driver.datastore.inflight_creates or {}
+local inflight_key = bridge.device_network_id .. "|" .. mapped.key
+local inflight_ts = inflight[inflight_key]
+if inflight_ts ~= nil then
+  if (os.time() - inflight_ts) < INFLIGHT_TTL_SECONDS then
+    return                       -- genuinely in-flight; device_added still expected
+  end
+  inflight[inflight_key] = nil   -- TTL expired → assume the create was lost → allow retry
+  driver.datastore.inflight_creates = inflight   -- copy-out: persist the eviction
+end
+-- ... proceed to de-dup against the queue and table.insert(queue, { ... }) ...
+```
+
+This (alongside the queue's own de-dup) prevents duplicate child devices during the initial bulk
+create **and** guarantees a glitched create is retried within `INFLIGHT_TTL_SECONDS` rather than
+stranding the device forever.
 
 ## 9. Detecting Late-Added / Removed Devices
 
-Incremental `refreshStates` polling reports **property changes** in `changes`, but a hub
-reports newly paired, removed, or reconfigured devices in **`events`** (e.g.
-`DeviceCreatedEvent`). A new but idle device may never appear in `changes`. Two safeguards
-are required so late additions are not missed:
+A device added to the hub *after* the first inventory sync must appear in SmartThings
+**automatically**, without the user opening the bridge card or restarting the driver. A single
+detection path is **not** enough — implement **all three** below. They cover different hub
+behaviours, and a device that slips through one is caught by another.
+
+`refreshStates` returns two distinct arrays, and they are **not interchangeable**:
+
+| Array | Carries | Fires when |
+|-------|---------|-----------|
+| `changes` | **property** updates (value/level/battery) for *existing* device IDs | a device's state changes |
+| `events`  | **topology** events (`DeviceCreatedEvent`, `DeviceRemovedEvent`, `DeviceModifiedEvent`) | a device is paired / removed / reconfigured on the hub |
+
+A newly paired but **idle** device (e.g. a contact sensor that hasn't been triggered yet) emits a
+topology `event` but may never appear in `changes`. If you only inspect `changes`, that device is
+invisible until it happens to report state — which may be hours, or never. **You must inspect both.**
 
 ```lua
--- (a) Honor topology events in the change feed
+-- (a) Topology events — primary path for late additions (esp. HC3-class hubs).
+--     Iterate payload.events, NOT just payload.changes.
 for _, event in ipairs(payload.events or {}) do
   local etype = tostring(event.type or "")
   if etype:find("DeviceCreated") or etype:find("DeviceRemoved") or etype:find("DeviceModified") then
@@ -552,7 +690,16 @@ for _, event in ipairs(payload.events or {}) do
   end
 end
 
--- (b) Periodic full reconcile, independent of the change feed
+-- (b) Unknown device ID in the change feed — covers hubs that omit topology events.
+--     When a change references a device_id with no matching child, a new device exists.
+for _, change in ipairs(payload.changes or {}) do
+  if change.id and child_for_bridge_and_device_id(driver, bridge, change.id) == nil then
+    should_resync_inventory = true
+  end
+end
+
+-- (c) Periodic full reconcile — catch-all, independent of the change feed.
+--     Covers silent additions that emit neither a topology event nor a state change.
 local n = (tonumber(bridge:get_field(fields.POLL_COUNT)) or 0) + 1
 bridge:set_field(fields.POLL_COUNT, n, { persist = false })
 if n % FULL_SYNC_EVERY_N_POLLS == 0 then        -- e.g. every 20 polls ≈ 10 min at 30s
@@ -560,7 +707,18 @@ if n % FULL_SYNC_EVERY_N_POLLS == 0 then        -- e.g. every 20 polls ≈ 10 mi
 end
 ```
 
-Without these, a device added to the hub between full syncs is only picked up on the next
+When any path sets `should_resync_inventory`, run `sync.sync_bridge_inventory` — which enqueues the
+new device and (via §8a `sync.drain_pending`) creates it automatically within seconds.
+
+> **❌ Anti-pattern: relying on `changes` alone (path b only).** A driver that detects new devices
+> *only* by "unknown device_id appeared in `changes`" will miss every idle late-added device and
+> every device on a hub whose firmware doesn't surface state until first interaction. Such a driver
+> appears to work in testing (you toggle the new device, it shows up) but fails in the field
+> (sensors sit unpaired). **Paths (a) and (c) are not optional extras — they are what make
+> late-additions reliable.** This is also the single biggest behavioural gap between a robust
+> bridge driver and a naïve one; do not ship without all three.
+
+Without all three, a device added to the hub between full syncs is only picked up on the next
 driver restart or manual refresh.
 
 ## Key Design Principles
@@ -572,4 +730,6 @@ driver restart or manual refresh.
 5. **Targeted refresh** — only refresh children that changed, not all children
 6. **Health propagation** — bridge offline → children should reflect this
 7. **Never bulk-create inline** — enqueue + drain in paced batches with backoff (§8); a large hub will otherwise trip the cloud creation rate limit and silently lose devices
-8. **Reconcile on a timer + on topology events** — incremental `changes` alone will miss idle late-added devices (§9)
+8. **Drain via self-scheduling `sync.drain_pending`, never a bare `drain_create_queue`** — and cascade-drain from `device_added` (§8a/§8b); a one-shot drain forces the user to pull-to-refresh once per batch
+9. **TTL-bound the in-flight guard** — a bare `inflight[key] ~= nil` check strands a device forever on a cloud glitch; evict after `INFLIGHT_TTL_SECONDS` and retry (§8c)
+10. **Detect late additions three ways** — topology `events`, unknown ID in `changes`, AND a periodic full reconcile; `changes` alone misses idle late-added devices (§9)

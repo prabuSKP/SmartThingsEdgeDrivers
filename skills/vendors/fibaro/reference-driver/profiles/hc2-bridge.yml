@@ -1,0 +1,89 @@
+name: hc2-bridge
+components:
+  - id: main
+    capabilities:
+      - id: refresh
+        version: 1
+    categories:
+      - name: Bridges
+preferences:
+  - name: scheme
+    title: Protocol
+    description: "Protocol used to reach the hub. Leave blank or set to http for plain HTTP (default). Set to https to enable TLS. HTTPS is used only when this is set to https — it is never auto-enabled by discovery."
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 5
+      default: ""
+  - name: tlsVerify
+    title: TLS Verify
+    description: "HTTPS only. none = encrypt only, no certificate validation (default). auto = fetch the hub's CA from /api/settings/certificates/ca and validate every connection against it. bundled = validate against the certificate shipped in the driver."
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 8
+      default: "none"
+  - name: serialNumber
+    title: Fibaro Serial Number
+    description: "HC3 serial number (e.g. 00033787). The driver reaches the hub at hc3-<serial>.local via mDNS, so no IP is needed. Find it in the Fibaro app or on the device label. Ignored if Fibaro Host is set."
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 64
+      default: ""
+  - name: host
+    title: Fibaro Host
+    description: "Optional IP address or hostname override. Set for HC2, or to bypass the serial-number/mDNS lookup. Takes precedence over Serial Number when set."
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 255
+      default: ""
+  - name: port
+    title: Fibaro Port
+    description: Auto-detected for mDNS-discovered bridges. Leave empty to use the default (80 for HTTP, 443 for HTTPS).
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 5
+      default: ""
+  - name: username
+    title: Fibaro Username
+    description: Username for Fibaro HC2 or HC3 Basic Auth. Required for device sync.
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 255
+      default: ""
+  - name: password
+    title: Fibaro Password
+    description: Password for Fibaro HC2 or HC3 Basic Auth. Required for device sync.
+    required: false
+    preferenceType: string
+    definition:
+      stringType: password
+      minLength: 0
+      maxLength: 255
+      default: ""
+  - name: pollInterval
+    title: Poll Interval (Seconds)
+    description: Interval for inventory and state sync. Lower values increase LAN traffic.
+    required: false
+    preferenceType: integer
+    definition:
+      minimum: 10
+      maximum: 3600
+      default: 30
+

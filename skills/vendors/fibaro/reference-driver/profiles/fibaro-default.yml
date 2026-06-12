@@ -1,0 +1,10 @@
+name: fibaro-default
+components:
+  - id: main
+    capabilities:
+      - id: sensor
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: GenericSensor

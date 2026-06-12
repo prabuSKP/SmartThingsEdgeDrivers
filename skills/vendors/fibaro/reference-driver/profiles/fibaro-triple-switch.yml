@@ -1,0 +1,31 @@
+name: fibaro-triple-switch
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: Switch
+  - id: switch1
+    label: Relay 1
+    capabilities:
+      - id: switch
+        version: 1
+    categories:
+      - name: Switch
+  - id: switch2
+    label: Relay 2
+    capabilities:
+      - id: switch
+        version: 1
+    categories:
+      - name: Switch
+  - id: switch3
+    label: Relay 3
+    capabilities:
+      - id: switch
+        version: 1
+    categories:
+      - name: Switch

@@ -89,9 +89,32 @@ local function device_added(driver, device)
   else
     -- It is a child device
     log.info(string.format("[%s] Child device added. Key: %s", device.label, device.parent_assigned_child_key))
+    sync.apply_pending_child_metadata(driver, device)
+
+    -- If this driver creates children via the paced create queue (large hubs,
+    -- see hub-event-sync §8), free this child's in-flight slot AND cascade-drain
+    -- the next queued batch so the remaining devices keep creating without the
+    -- user pulling-to-refresh the bridge card. (§8b)
+    local bridge = find_parent_bridge(driver, device)
+    if bridge then
+      sync.clean_inflight_creates(driver, bridge)
+      local remaining = driver.datastore.pending_create_queue or {}
+      if #remaining > 0 then
+        bridge.thread:call_with_delay(0.5, function()
+          pcall(sync.drain_pending, driver, bridge)
+        end)
+      end
+    end
   end
 end
 ```
+
+> **Why the cascade drain belongs in `added`, not `init`:** `try_create_device` is async, so
+> `device_added` is the earliest moment a create slot frees up. Kicking `sync.drain_pending` here
+> creates the next batch within ~0.5s instead of waiting for the next poll tick. Without it, a
+> 50–100 device hub forces the user to pull-to-refresh the bridge card once per batch. (Bridges
+> with only a handful of children that create inline don't need this — it's specifically for the
+> queue-based bulk-create path.)
 
 ### B. `init` (Device Initialized)
 Called **every time the driver starts up** (after driver update, hub reboot) and right after the `added` lifecycle event when a new device is created.

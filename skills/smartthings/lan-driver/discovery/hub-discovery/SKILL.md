@@ -22,6 +22,7 @@ hub discovery handler.
 5. Cache discovered host/port/scheme/serial data before `try_create_device()`, then apply it during lifecycle init.
 6. Emit hub-visible logs for discovery start, manual fallback creation, each accepted network candidate, each rejected broad candidate, and every create failure.
 7. If automatic LAN discovery is part of the requested driver behavior, generate a real discovery provider using `st.mdns` or the selected LAN mechanism. Do not leave discovery as a placeholder loop that only sleeps.
+8. **Pick the discovery mechanism the hub actually supports — do not default to `st.mdns`.** Some hubs advertise neither SSDP/UPnP nor a browsable mDNS service and are located only by a **proprietary UDP "find-server" broadcast** (Fibaro HC2/HC3: UDP `:44444`). For those, generate the UDP finder as the auto-discovery scan — an `st.mdns` browse will silently return nothing and waste the scan window. See `discovery/find-server-udp`. (mDNS may still appear elsewhere as a narrow **serial→`<host>.local` resolution** in the sync/bootstrap path — that is a lookup, not a discovery scan.)
 
 ## Discovery Architecture
 
