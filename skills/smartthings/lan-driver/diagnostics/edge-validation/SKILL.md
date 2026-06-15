@@ -16,6 +16,33 @@ bug per generation: empty `scheme` → `localhost`, datastore queue never persis
 Run all five stages from the driver root and **report each result to the user**. Do not declare a
 driver ready while any stage fails.
 
+## Quick start — one command (`run-gate.sh`)
+
+Run the whole scriptable gate (Stages 1, 1b, 1c, 1c(2), 2, 2b, 3, 6) with a single pass/fail:
+
+```bash
+<skills>/smartthings/lan-driver/diagnostics/edge-validation/scripts/run-gate.sh <driver-dir>
+# exit 0 = all scriptable stages passed   (Stage 5 hub install still required for full sign-off)
+# exit 1 = one or more stages failed → driver is NOT production-grade; do not hand off
+# exit 2 = usage/path error → NOTHING was validated; treat as failure
+```
+
+This is the artifact an **enforcement hook** should call after generation — block handover unless
+exit is 0. `run-gate.sh` is fail-closed: a bad path or an empty `src/` exits **2**, never a false
+"OK". It is verified to **fail** a known-broken driver (the v40 `driver.open(...)` /
+`windowShadeLevel.setLevel` / hardcoded-IP build) and **pass** the production reference driver
+(`drivers/Unofficial/fibaro-hc2`).
+
+> **Invocation contract (important).** Every `check-*.js` script accepts **either a directory
+> (walked for `.lua`) or explicit file paths**, and **fails (exit ≥1) when zero files are
+> scanned** — so handing a script a directory can never silently pass. (Earlier versions
+> `continue`d past a directory arg and printed "OK", or crashed with `EISDIR`; both are fixed.)
+> If the compile stage prints `WARN: no luac/lua on PATH`, install a Lua to enable it — the JS
+> nil-linter covers the most common load failures but is not a full compiler.
+
+The stages below document each check individually (what it catches and how to read its output);
+`run-gate.sh` simply runs them in order with the correct arguments.
+
 ## Stage 1 — Lua syntax (`luac -p`)
 
 Every `.lua` file must compile. A single unclosed paren or forward-reference fails the package.
@@ -183,10 +210,18 @@ grep -rniE 'return +[a-z_]*driver\b' src/init.lua   # case-INSENSITIVE: catches 
 
 # Empty-string scheme trap (": or ''" → "" is truthy in Lua)
 grep -rn 'scheme or "http"\|scheme or "https"' src/
+
+# C/JS-style line comments — Lua comments are `--`, NOT `//`. `//` is integer floor-division, so a
+# line-leading `//` is a SYNTAX ERROR. If it lands in init.lua the driver never loads and NO device
+# card appears during the scan (v42). luac -p catches it, but this grep catches it WITHOUT a Lua
+# toolchain. Scan stripped source so a legitimate `://` inside a URL string never false-positives.
+for f in $(find src -name '*.lua'); do
+  node <skills>/.../scripts/lua-strip.js "$f" | grep -nE '^[[:space:]]*//' && echo "FAIL: $f has // comments (use --)"
+done
 ```
 
 Any hit → fix before shipping. (Illustrative IPs inside comments/docs are fine in skills, **never**
-in generated `src/`.)
+in generated `src/`.) `run-gate.sh` runs all of the above, including the `//`-comment guard.
 
 ## Stage 3 — Profile / mapper / capability parity
 
@@ -239,9 +274,42 @@ Pass criteria: bridge appears **exactly once**, the requested child device(s) ar
 and refresh work. See `cli-control` for the full packaging/selection flow and `edge-log-analysis`
 for reading the logcat output.
 
+## Stage 6 — Golden-reference structural diff (CATCHES CROSS-FILE CONTRACT DRIFT)
+
+Single-file checks (Stages 1b/1c) cannot see a mismatch **between** two modules — e.g. a
+`utils.labeled_socket_builder` whose arity/return-shape no longer matches how `lunchbox/rest.lua`
+calls it (v41: builder was `function(sock)` → `client.socket` became the host *string* →
+`rest.lua:52 attempt to call a nil value (method 'send')`, so the bridge never talked to the hub),
+or a missing `fibaro_finder.lua` (v40). Both files compile and lint clean individually; the defect
+is only visible when wired together — historically only at Stage 5 on real hardware.
+
+`scripts/check-golden-structure.js` compares the generated driver's **infrastructure** against the
+proven reference driver and flags drift **before** the hub:
+
+```bash
+node <skills>/.../scripts/check-golden-structure.js <golden-reference-dir> <generated-dir>
+# default golden reference: skills/vendors/fibaro/reference-driver
+```
+
+It is deliberately **scope-aware** so it never fights the "generate only requested device kinds"
+rule:
+
+- Compares only `src/**/*.lua` (infrastructure modules, identical across every scoped driver) —
+  **never** `profiles/`, the mapper RULE table, or which children exist.
+- Compares each module's **exported function surface** (`T.name(...)` / `T.name = function(...)` /
+  `T:name(...)`), not local helpers — a benign internal refactor does not trip it.
+- One-directional superset: every reference src file must be present, and every reference export
+  must exist with **matching arity**; extra files/exports in the generated driver are allowed.
+
+Verified: **passes** the reference and a legitimately scoped copy (profiles removed); **fails** v41
+(`utils.lua export 'labeled_socket_builder' arity 2 != reference 3`) and a driver missing
+`fibaro_finder.lua`. `run-gate.sh` runs this automatically for Fibaro drivers (config/profiles
+detect the vendor); for other vendors, pass a matching `--golden` reference or it is skipped.
+
 ## Handover checklist (report this back)
 
 ```text
+[ ] run-gate.sh <driver-dir> exits 0   (runs Stages 1, 1b, 1c, 1c², 2, 2b, 3 in one pass)
 [ ] Stage 1   luac -p / fengari compile clean
 [ ] Stage 1b  runtime-nil lint clean (forward-ref / undefined-call / pcall-misuse) — check-lua-nils.js
 [ ] Stage 1c  Driver construction OK (real ctor, no fabricated API) — check-driver-api.js
@@ -250,6 +318,9 @@ for reading the logcat output.
 [ ] Stage 3   profile/mapper parity (no orphans)
 [ ] Stage 4   scope matches request (not a full-catalog clone)
 [ ] Stage 5   installs; bridge once; child(ren) created; commands/refresh work
+[ ] Stage 6   golden structure OK (infra surface matches reference) — check-golden-structure.js
 ```
 
-Only when all six pass is the driver ready to hand over.
+`run-gate.sh` covers everything except Stage 4 (scope — needs the original request) and Stage 5
+(needs a hub). Only when `run-gate.sh` exits 0 **and** Stages 4–5 pass is the driver ready to hand
+over.

@@ -5,12 +5,34 @@
 //   - `discovery = { ... }` (must be a function)
 //   - fabricated top-level option keys
 const fs = require('fs');
+const path = require('path');
 const FABRICATED = new Set(['driver_init','device_lifecycle','on_install',
   'preference_change_handler','disconnected_handler','init_handler','poll','handler']);
 
+// Accept any mix of files and directories. Walking a directory is the natural invocation;
+// the old version silently `continue`d past a directory arg and printed "OK" (a false pass).
+function walk(p, acc) {
+  const st = fs.statSync(p);
+  if (st.isDirectory()) { for (const e of fs.readdirSync(p)) walk(path.join(p, e), acc); }
+  else if (p.endsWith('.lua')) acc.push(p);
+  return acc;
+}
+const args = process.argv.slice(2);
+if (args.length === 0) { console.error('usage: check-driver-api.js <driver-dir | path/to/init.lua> ...'); process.exit(2); }
+const allLua = [];
+for (const a of args) {
+  if (!fs.existsSync(a)) { console.error(`VALIDATION ERROR: path not found: ${a}`); process.exit(2); }
+  walk(a, allLua);
+}
+// An Edge driver MUST have an init.lua. Zero init.lua = fail-closed, never a silent pass.
+const initFiles = allLua.filter(f => /(^|[\/\\])init\.lua$/.test(f));
+if (initFiles.length === 0) {
+  console.error(`VALIDATION ERROR: no init.lua found under: ${args.join(', ')} — cannot validate Driver construction`);
+  process.exit(2);
+}
+
 let total = 0;
-for (const file of process.argv.slice(2)) {
-  if (!/init\.lua$/.test(file)) continue;
+for (const file of initFiles) {
   const raw = fs.readFileSync(file, 'utf8');
   const rawLines = raw.split('\n');
   const lines = raw.replace(/--\[\[[\s\S]*?\]\]/g,' ').replace(/--.*$/gm,' ')

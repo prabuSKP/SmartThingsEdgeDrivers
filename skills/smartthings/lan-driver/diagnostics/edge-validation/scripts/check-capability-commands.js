@@ -30,8 +30,26 @@ const CMDS = {
   alarm: ['off','siren','strobe','both'],
 };
 
+// Accept any mix of files and directories. The old version did `readFileSync` on each arg
+// directly, so a directory arg crashed with EISDIR; walk dirs and collect .lua instead.
+const path = require('path');
+function walk(p, acc) {
+  const st = fs.statSync(p);
+  if (st.isDirectory()) { for (const e of fs.readdirSync(p)) walk(path.join(p, e), acc); }
+  else if (p.endsWith('.lua')) acc.push(p);
+  return acc;
+}
+const args = process.argv.slice(2);
+if (args.length === 0) { console.error('usage: check-capability-commands.js <driver-dir | file.lua> ...'); process.exit(2); }
+const files = [];
+for (const a of args) {
+  if (!fs.existsSync(a)) { console.error(`VALIDATION ERROR: path not found: ${a}`); process.exit(2); }
+  walk(a, files);
+}
+if (files.length === 0) { console.error(`VALIDATION ERROR: no .lua files found under: ${args.join(', ')}`); process.exit(2); }
+
 let total = 0;
-for (const file of process.argv.slice(2)) {
+for (const file of files) {
   const src = fs.readFileSync(file,'utf8');
   const lines = src.replace(/--\[\[[\s\S]*?\]\]/g,' ').replace(/--.*$/gm,' ').split('\n');
   const re = /\bcapabilities\.([A-Za-z]\w*)\.commands\.([A-Za-z]\w*)/g;

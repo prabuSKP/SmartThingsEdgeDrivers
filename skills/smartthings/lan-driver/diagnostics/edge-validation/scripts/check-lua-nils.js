@@ -3,6 +3,9 @@
 //   (2) undefined-call   : bare NAME(...) where NAME is defined nowhere in the file and is not a builtin
 //   (3) pcall-misuse     : `local A,... = pcall(...)` then A used as a table (A. / A: / A[)  -- A is the OK boolean
 const fs = require('fs');
+// Shared Lua-aware stripper. A naive regex that removes line-comments before strings mis-handles
+// `--` inside a string and desyncs the rest of the file (cascade of bogus undefined-call hits).
+const stripCommentsStrings = require('./lua-strip.js');
 
 const BUILTINS = new Set(['assert','collectgarbage','dofile','error','getmetatable','ipairs','load',
   'loadstring','next','pairs','pcall','print','rawequal','rawget','rawlen','rawset','require','select',
@@ -12,16 +15,25 @@ const BUILTINS = new Set(['assert','collectgarbage','dofile','error','getmetatab
 
 let total = 0;
 
-function stripCommentsStrings(raw) {
-  return raw
-    .replace(/--\[\[[\s\S]*?\]\]/g, ' ')
-    .replace(/--.*$/gm, ' ')
-    .replace(/"(\\.|[^"\\])*"/g, '""')
-    .replace(/'(\\.|[^'\\])*'/g, "''")
-    .replace(/\[\[[\s\S]*?\]\]/g, '""');
+// Accept any mix of files and directories. The old version did `readFileSync` on each arg
+// directly, so a directory arg crashed with EISDIR; walk dirs and collect .lua instead.
+const path = require('path');
+function walk(p, acc) {
+  const st = fs.statSync(p);
+  if (st.isDirectory()) { for (const e of fs.readdirSync(p)) walk(path.join(p, e), acc); }
+  else if (p.endsWith('.lua')) acc.push(p);
+  return acc;
 }
+const args = process.argv.slice(2);
+if (args.length === 0) { console.error('usage: check-lua-nils.js <driver-dir | file.lua> ...'); process.exit(2); }
+const files = [];
+for (const a of args) {
+  if (!fs.existsSync(a)) { console.error(`VALIDATION ERROR: path not found: ${a}`); process.exit(2); }
+  walk(a, files);
+}
+if (files.length === 0) { console.error(`VALIDATION ERROR: no .lua files found under: ${args.join(', ')}`); process.exit(2); }
 
-for (const file of process.argv.slice(2)) {
+for (const file of files) {
   const src = stripCommentsStrings(fs.readFileSync(file, 'utf8'));
   const lines = src.split('\n');
 

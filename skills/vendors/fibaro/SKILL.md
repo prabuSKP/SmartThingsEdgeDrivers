@@ -23,8 +23,8 @@ Fibaro requires HTTP Basic Authentication for all local API requests. Make sure 
 When generating a Fibaro bridge Edge driver, combine this vendor skill with the generic LAN bridge skills and enforce these Fibaro-specific choices:
 
 - Use `fibaro` as the profile and child-key prefix unless the user explicitly asks for another package prefix.
-- Bridge profile: `fibaro-bridge` (always generated).
-- **Generate child profiles only for the device kinds the user requested — not the whole catalog.** The table below is the full set of Fibaro profile *names to use when a kind is in scope*; it is not a list to emit every time. A request for "a light on the HC3" yields `fibaro-bridge` + `fibaro-switch`/`fibaro-dimmer` only, with the Fibaro mapper scoped to skip every other device type (no `fibaro-default`). Generate the full catalog only when the user asks for all devices / a complete integration. See `smartthings/lan-driver/mapping/hub-profile-mapping` → "Scope: Generate Only Requested Device Types".
+- Bridge profile: **`hc2-bridge`** (file `profiles/hc2-bridge.yml`, `name: hc2-bridge`) — always generated. This is the one profile that does **not** take the `fibaro-` prefix; the working driver's `discovery.lua` creates the bridge with `profile = "hc2-bridge"`, so emitting `fibaro-bridge` instead breaks the profile↔mapper parity check and the bridge never materializes. Child profiles still use the `fibaro-` prefix.
+- **Generate child profiles only for the device kinds the user requested — not the whole catalog.** The table below is the full set of Fibaro profile *names to use when a kind is in scope*; it is not a list to emit every time. A request for "a light on the HC3" yields `hc2-bridge` + `fibaro-switch`/`fibaro-dimmer` only, with the Fibaro mapper scoped to skip every other device type (no `fibaro-default`). Generate the full catalog only when the user asks for all devices / a complete integration. See `smartthings/lan-driver/mapping/hub-profile-mapping` → "Scope: Generate Only Requested Device Types".
 
 | Kind | Profile name |
 |---|---|
