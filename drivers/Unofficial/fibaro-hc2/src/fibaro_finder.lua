@@ -20,6 +20,9 @@ local utils = require "utils"
 
 local finder = {}
 
+-- Test injection point: tests replace finder._socket with a mock before calling finder.scan().
+finder._socket = socket
+
 -- Fibaro find-server port. Packet capture (june_12) showed the HC replies only on 44444
 -- (port 9999 yielded nothing), and it ACKs essentially any datagram there, so a single probe
 -- on 44444 is enough -- no need for the original 5-probe x 2-port sweep.
@@ -176,7 +179,7 @@ function finder.scan(driver, window)
   window = window or DEFAULT_LISTEN_WINDOW
   log.info_with({hub_logs = true}, "[Fibaro] ========== Starting Fibaro find-server discovery (UDP 44444) ==========")
 
-  local sock, err = socket.udp()
+  local sock, err = finder._socket.udp()
   if not sock then
     log.warn_with({hub_logs = true}, string.format("[Fibaro] finder: could not create UDP socket: %s", tostring(err)))
     return {}

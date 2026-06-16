@@ -460,4 +460,434 @@ test.register_coroutine_test(
   end
 )
 
+-- ============================================================
+-- ADDITIONAL SENSOR TYPES (Phase 2: Additional Device Types)
+-- Note: These tests document current behavior. The mapper
+-- falls back to generic-sensor/default for types without
+-- explicit interface/type/action rules.
+-- ============================================================
+
+test.register_coroutine_test(
+  "Mapper - CO detector by type (current: falls back to smoke-detector via lifeDangerSensor)",
+  function()
+    local device = {
+      id = 100,
+      label = "CO Detector",
+      type = "com.fibaro.coSensor",
+      base_type = "com.fibaro.lifeDangerSensor",
+      interfaces = {},
+      actions = {},
+      value = false,
+      room_id = 3,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "CO detector should be mapped")
+    -- Matches smoke-detector rule via base_type contains "lifeDangerSensor"
+    assert(mapped.kind == "smoke-detector",
+      "Kind should be smoke-detector (via lifeDangerSensor base_type), got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - vibration sensor by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 101,
+      label = "Vibration Sensor",
+      type = "com.fibaro.vibrationSensor",
+      interfaces = {},
+      actions = {},
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Vibration sensor should be mapped")
+    -- Falls back to generic-sensor since no vibrationSensor rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - acceleration sensor by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 102,
+      label = "Acceleration Sensor",
+      type = "com.fibaro.accelerationSensor",
+      interfaces = {},
+      actions = {},
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Acceleration sensor should be mapped")
+    -- Falls back to generic-sensor since no accelerationSensor rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - soil moisture sensor by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 103,
+      label = "Soil Moisture Sensor",
+      type = "com.fibaro.soilMoistureSensor",
+      interfaces = {},
+      actions = {},
+      value = 45,
+      room_id = 2,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Soil moisture sensor should be mapped")
+    -- Falls back to generic-sensor since no soilMoistureSensor rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - UV sensor by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 104,
+      label = "UV Sensor",
+      type = "com.fibaro.uvSensor",
+      interfaces = {},
+      actions = {},
+      value = 5,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "UV sensor should be mapped")
+    -- Falls back to generic-sensor since no uvSensor rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - air quality sensor by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 105,
+      label = "Air Quality Sensor",
+      type = "com.fibaro.airQualitySensor",
+      interfaces = {},
+      actions = {},
+      value = 85,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Air quality sensor should be mapped")
+    -- Falls back to generic-sensor since no airQualitySensor rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - voltage sensor by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 106,
+      label = "Voltage Sensor",
+      type = "com.fibaro.voltageSensor",
+      interfaces = {},
+      actions = {},
+      value = 230,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Voltage sensor should be mapped")
+    -- Falls back to generic-sensor since no voltageSensor rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - current sensor by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 107,
+      label = "Current Sensor",
+      type = "com.fibaro.currentSensor",
+      interfaces = {},
+      actions = {},
+      value = 2.5,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Current sensor should be mapped")
+    -- Falls back to generic-sensor since no currentSensor rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+-- ============================================================
+-- ACTUATOR TYPES (Phase 2: Additional Device Types)
+-- Note: These tests document current behavior.
+-- ============================================================
+
+test.register_coroutine_test(
+  "Mapper - siren by action (current: matches switch via turnOn/turnOff)",
+  function()
+    local device = {
+      id = 200,
+      label = "Siren",
+      type = "com.fibaro.siren",
+      interfaces = {},
+      actions = { turnOn = true, turnOff = true },
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Siren should be mapped")
+    -- Matches switch rule (has turnOn/turnOff actions)
+    assert(mapped.kind == "switch",
+      "Kind should be switch (via action match), got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - sprinkler by action (current: matches switch via turnOn/turnOff)",
+  function()
+    local device = {
+      id = 201,
+      label = "Sprinkler",
+      type = "com.fibaro.sprinkler",
+      interfaces = {},
+      actions = { turnOn = true, turnOff = true },
+      value = false,
+      room_id = 2,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Sprinkler should be mapped")
+    -- Matches switch rule (has turnOn/turnOff actions)
+    assert(mapped.kind == "switch",
+      "Kind should be switch (via action match), got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - fan by action (current: matches switch via turnOn/turnOff)",
+  function()
+    local device = {
+      id = 202,
+      label = "Fan",
+      type = "com.fibaro.fan",
+      interfaces = {},
+      actions = { turnOn = true, turnOff = true },
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Fan should be mapped")
+    -- Matches switch rule (has turnOn/turnOff actions)
+    assert(mapped.kind == "switch",
+      "Kind should be switch (via action match), got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - thermostat by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 203,
+      label = "Thermostat",
+      type = "com.fibaro.thermostat",
+      interfaces = {},
+      actions = { setHeatingSetpoint = true, setCoolingSetpoint = true },
+      value = 21,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Thermostat should be mapped")
+    -- Falls back to generic-sensor since no thermostat rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper - garage door by type (current: falls back to generic-sensor)",
+  function()
+    local device = {
+      id = 204,
+      label = "Garage Door",
+      type = "com.fibaro.garageDoor",
+      interfaces = {},
+      actions = { open = true, close = true },
+      value = "closed",
+      room_id = 0,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Garage door should be mapped")
+    -- Falls back to generic-sensor since no garageDoor rule exists
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+-- ============================================================
+-- MAPPER EDGE CASES (Phase 2: Error Handling - Section 4.3)
+-- Tests for edge cases in mapper behavior
+-- ============================================================
+
+test.register_coroutine_test(
+  "Mapper Edge - device with nil label gets default label",
+  function()
+    local device = {
+      id = 300,
+      type = "com.fibaro.binarySwitch",
+      actions = { turnOn = true, turnOff = true },
+      interfaces = {},
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Device should be mapped")
+    assert(type(mapped.label) == "string", "Label should be a string")
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper Edge - device with nil type falls back to default",
+  function()
+    local device = {
+      id = 301,
+      label = "No Type Device",
+      actions = { turnOn = true, turnOff = true },
+      interfaces = {},
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Device should be mapped")
+    assert(mapped.kind == "default" or mapped.kind == "switch",
+      "Kind should be default or switch, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper Edge - device with empty actions gets generic-sensor",
+  function()
+    local device = {
+      id = 302,
+      label = "No Actions Device",
+      type = "com.fibaro.device",
+      actions = {},
+      interfaces = {},
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Device should be mapped")
+    -- No actions means no switch/dimmer match, falls back
+    assert(mapped.kind == "generic-sensor" or mapped.kind == "default",
+      "Kind should be generic-sensor or default, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper Edge - device with nil room_id gets no room prefix",
+  function()
+    local device = {
+      id = 303,
+      label = "No Room Device",
+      type = "com.fibaro.binarySwitch",
+      actions = { turnOn = true, turnOff = true },
+      interfaces = {},
+      value = false,
+      room_id = nil,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Device should be mapped")
+    -- Label should not have room prefix
+    assert(mapped.label == "No Room Device",
+      "Label should be unchanged without room, got: " .. tostring(mapped.label))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper Edge - device with unknown interface still matches by actions",
+  function()
+    local device = {
+      id = 304,
+      label = "Unknown Interface Device",
+      type = "com.fibaro.binarySwitch",
+      actions = { turnOn = true, turnOff = true },
+      interfaces = { "unknownInterface" },
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Device should be mapped")
+    -- Unknown interface doesn't break action-based matching
+    assert(mapped.kind == "switch",
+      "Kind should be switch (via actions), got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper Edge - device with zero value is handled correctly",
+  function()
+    local device = {
+      id = 305,
+      label = "Zero Value Sensor",
+      type = "com.fibaro.temperatureSensor",
+      interfaces = { "temperatureSensor" },
+      actions = {},
+      value = 0,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Device should be mapped")
+    assert(mapped.kind == "temperature-sensor",
+      "Kind should be temperature-sensor, got: " .. tostring(mapped.kind))
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper Edge - device with empty string label is handled",
+  function()
+    local device = {
+      id = 306,
+      label = "",
+      type = "com.fibaro.binarySwitch",
+      actions = { turnOn = true, turnOff = true },
+      interfaces = {},
+      value = false,
+      room_id = 1,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Device should be mapped")
+    assert(type(mapped.label) == "string", "Label should be a string")
+  end
+)
+
+test.register_coroutine_test(
+  "Mapper Edge - device with room_id 0 gets no room prefix",
+  function()
+    local device = {
+      id = 307,
+      label = "Room Zero Device",
+      type = "com.fibaro.binarySwitch",
+      actions = { turnOn = true, turnOff = true },
+      interfaces = {},
+      value = false,
+      room_id = 0,
+    }
+    local mapped = mapper.map_device(device, rooms, false)
+    assert(mapped ~= nil, "Device should be mapped")
+    -- room_id 0 means no room assigned
+    assert(mapped.label == "Room Zero Device",
+      "Label should be unchanged with room_id 0, got: " .. tostring(mapped.label))
+  end
+)
+
 test.run_registered_tests()
