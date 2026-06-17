@@ -43,6 +43,10 @@ local LAST_IMPORTED_REPORT_TIMESTAMP = "__last_imported_report_timestamp"
 local LAST_EXPORTED_REPORT_TIMESTAMP = "__last_exported_report_timestamp"
 local MINIMUM_ST_ENERGY_REPORT_INTERVAL = (15 * 60) -- 15 minutes, reported in seconds
 
+-- Seconds between Unix epoch (1970-01-01) and Matter epoch (2000-01-01).
+-- Used to convert EnergyMeasurementStruct.endSystime (epoch-us, Matter epoch) to Unix time.
+local MATTER_EPOCH_OFFSET = 946684800
+
 -- total in case there are multiple electrical sensors
 local TOTAL_CUMULATIVE_ENERGY_IMPORTED = "__total_cumulative_energy_imported"
 local TOTAL_CUMULATIVE_ENERGY_EXPORTED = "__total_cumulative_energy_exported"
@@ -104,7 +108,13 @@ local function endpoint_to_component(device, ep)
   local map = device:get_field(COMPONENT_TO_ENDPOINT_MAP) or {}
   for component, endpoint in pairs(map) do
     if endpoint == ep then
-      return component
+      -- Only return the mapped component if the current profile actually has it.
+      -- If not (e.g. "electricalMeter" map entry but profile uses "importedEnergy"),
+      -- fall through to "main" so emit_event_for_endpoint doesn't pass nil to emit_component_event.
+      if device.profile and device.profile.components and device.profile.components[component] then
+        return component
+      end
+      break
     end
   end
   return "main"
@@ -279,28 +289,24 @@ local function device_added(driver, device)
       ["electricalSensor"] = electrical_sensor_eps[1],
       ["deviceEnergyManagement"] = device_energy_mgmt_eps[1]
     }
-    device.log.debug(string.format("EVSE device: setting component map - electricalSensor=EP%d, deviceEnergyManagement=EP%d",
-      electrical_sensor_eps[1] or 0, device_energy_mgmt_eps[1] or 0))
+    device.log.debug(string.format("EVSE device: setting component map - electricalSensor=EP%s, deviceEnergyManagement=EP%s",
+      tostring(electrical_sensor_eps[1]), tostring(device_energy_mgmt_eps[1])))
     device:set_field(COMPONENT_TO_ENDPOINT_MAP, component_to_endpoint_map, { persist = true })
   else
     -- Non-EVSE multi-endpoint: build a component-per-endpoint map so that events from each
     -- endpoint are routed to the correct ST device component (one device, N components).
-    local sensor_eps   = get_endpoints_for_dt(device, ELECTRICAL_SENSOR_DEVICE_TYPE_ID) or {}
+    -- Note: Electrical Meter and Electrical Utility Meter now use the same profile
     local meter_eps    = get_endpoints_for_dt(device, ELECTRICAL_METER_DEVICE_TYPE_ID) or {}
-    local dem_eps      = get_endpoints_for_dt(device, DEVICE_ENERGY_MANAGEMENT_DEVICE_TYPE_ID) or {}
     local utility_eps  = get_endpoints_for_dt(device, ELECTRICAL_UTILITY_METER_DEVICE_TYPE_ID) or {}
-    local type_count   = (#sensor_eps > 0 and 1 or 0) + (#meter_eps > 0 and 1 or 0)
-                       + (#dem_eps > 0 and 1 or 0) + (#utility_eps > 0 and 1 or 0)
+    local type_count   = (#meter_eps > 0 and 1 or 0) + (#utility_eps > 0 and 1 or 0)
     if type_count > 1 then
       local comp_map = {}
-      if #sensor_eps  > 0 then comp_map["main"]                   = sensor_eps[1]  end
       if #meter_eps   > 0 then comp_map["electricalMeter"]        = meter_eps[1]   end
-      if #dem_eps     > 0 then comp_map["deviceEnergyManagement"] = dem_eps[1]     end
       if #utility_eps > 0 then comp_map["electricalUtilityMeter"] = utility_eps[1] end
       device:set_field(COMPONENT_TO_ENDPOINT_MAP, comp_map, { persist = true })
       device.log.debug(string.format(
-        "Multi-endpoint device: component map - main=EP%s, electricalMeter=EP%s, deviceEnergyManagement=EP%s, electricalUtilityMeter=EP%s",
-        tostring(sensor_eps[1]), tostring(meter_eps[1]), tostring(dem_eps[1]), tostring(utility_eps[1])))
+        "Multi-endpoint device: component map - electricalMeter=EP%s, electricalUtilityMeter=EP%s",
+        tostring(meter_eps[1]), tostring(utility_eps[1])))
     end
   end
 end
@@ -371,66 +377,14 @@ local function do_configure(driver, device)
     return result
   end
 
-  -- Multi-endpoint: Sensor colocated with Meter and/or DEM → one device, one component per endpoint.
-  -- This branch must run before the single-type Sensor branch so the richer profile wins.
-  if base_is_standalone and #electrical_sensor_eps > 0
-      and (#electrical_meter_eps > 0 or #dem_eps > 0) then
-    local has_voltage = detect_voltage()
-    local has_meter   = #electrical_meter_eps > 0
-    local has_dem     = #dem_eps > 0
-    local profile_name
-    if has_meter and has_dem then
-      profile_name = "electrical-sensor-meter-dem"
-    elseif has_meter then
-      profile_name = "electrical-sensor-meter"
-    elseif has_voltage then
-      profile_name = "electrical-sensor-voltage-current-dem"
-    else
-      profile_name = "electrical-sensor-dem"
-    end
-    device.log.debug(string.format(
-      "Multi-endpoint profile: Sensor=%d, Meter=%d, DEM=%d, has_voltage=%s → %s",
-      #electrical_sensor_eps, #electrical_meter_eps, #dem_eps, tostring(has_voltage), profile_name))
-    device.log.info_with({ hub_logs = true }, string.format("Updating device profile to %s.", profile_name))
-    device:try_update_metadata({ profile = profile_name })
-    return
-  end
-
-  -- Single Electrical Sensor (no co-located Meter or DEM on this fabric node)
-  if base_is_standalone and #electrical_sensor_eps > 0 then
-    device.log.debug(string.format("Standalone Electrical Sensor detected on endpoints: %s",
-      table.concat(electrical_sensor_eps, ", ")))
-    local has_voltage = detect_voltage()
-    local profile_name = has_voltage and "electrical-sensor-voltage-current" or "electrical-sensor"
-    device.log.debug(string.format("Selecting profile: %s", profile_name))
-    device.log.info_with({ hub_logs = true }, string.format("Updating device profile to %s.", profile_name))
-    device:try_update_metadata({ profile = profile_name })
-    return
-  end
-
   -- Standalone Electrical Meter (no Sensor on this node)
-  if #evse_eps == 0 and #electrical_meter_eps > 0 then
-    device.log.debug(string.format("Standalone Electrical Meter detected on endpoints: %s",
-      table.concat(electrical_meter_eps, ", ")))
+  if #evse_eps == 0 and (#electrical_meter_eps > 0 or #utility_meter_eps > 0) then
+    local detected_type = #electrical_meter_eps > 0 and "Electrical Meter" or "Electrical Utility Meter"
+    local endpoints = #electrical_meter_eps > 0 and electrical_meter_eps or utility_meter_eps
+    device.log.debug(string.format("Standalone %s detected on endpoints: %s", detected_type,
+      table.concat(endpoints, ", ")))
     device.log.info_with({ hub_logs = true }, "Updating device profile to electrical-meter.")
     device:try_update_metadata({ profile = "electrical-meter" })
-    return
-  end
-
-  -- Standalone DEM (no Sensor on this node)
-  if #evse_eps == 0 and #dem_eps > 0 then
-    device.log.debug(string.format("Standalone DEM detected on endpoints: %s", table.concat(dem_eps, ", ")))
-    device.log.info_with({ hub_logs = true }, "Updating device profile to dem-standalone.")
-    device:try_update_metadata({ profile = "dem-standalone" })
-    return
-  end
-
-  -- Standalone Electrical Utility Meter (0x0511)
-  if #evse_eps == 0 and #utility_meter_eps > 0 then
-    device.log.debug(string.format("Standalone Electrical Utility Meter detected on endpoints: %s",
-      table.concat(utility_meter_eps, ", ")))
-    device.log.info_with({ hub_logs = true }, "Updating device profile to electrical-utility-meter.")
-    device:try_update_metadata({ profile = "electrical-utility-meter" })
     return
   end
 
@@ -620,8 +574,8 @@ local function device_energy_mgmt_mode_attr_handler(driver, device, ib, response
   end
 end
 
-local function report_power_consumption_to_st_energy(device, component, latest_imported_energy_wh)
-  local current_time = os.time()
+local function report_power_consumption_to_st_energy(device, component, latest_imported_energy_wh, report_time)
+  local current_time = report_time or os.time()
 
   -- Per-component 15-minute timestamp key. Use the legacy bare key for "main" so that
   -- existing commissioned devices don't lose their stored timestamp on upgrade.
@@ -673,13 +627,31 @@ local function get_component_for_energy_reports(device, cumulative_import_or_exp
     local comp_map = device:get_field(COMPONENT_TO_ENDPOINT_MAP) or {}
     local is_multi = comp_map["electricalMeter"] ~= nil or comp_map["deviceEnergyManagement"] ~= nil
     if is_multi and endpoint_id then
-      local comp = endpoint_to_component(device, endpoint_id)
-      energyMeter_component    = comp
-      powerConsumption_component = comp
+      -- Use direct map lookup instead of endpoint_to_component, which normalises
+      -- unknown component names to "main" and would hide the "electricalMeter"→"importedEnergy"
+      -- translation needed for the electrical-meter profile.
+      local raw_comp = nil
+      for name, ep in pairs(comp_map) do
+        if ep == endpoint_id then raw_comp = name; break end
+      end
+      if raw_comp then
+        if device.profile.components[raw_comp] then
+          -- Legacy profile: component name in map matches an actual profile component.
+          energyMeter_component    = raw_comp
+          powerConsumption_component = raw_comp
+        elseif device.profile.components["importedEnergy"] ~= nil then
+          -- New profile naming: map has "electricalMeter" but profile uses "importedEnergy".
+          energyMeter_component    = "importedEnergy"
+          powerConsumption_component = "importedEnergy"
+        end
+      end
+      -- raw_comp==nil: endpoint not in map (e.g. EP1 Electrical Sensor alongside EP3
+      -- Electrical Meter).  Leave components nil — report silently dropped at line 714.
     else
       energyMeter_component    = "main"
       powerConsumption_component = "main"
-      if #get_endpoints_for_dt(device, BATTERY_STORAGE_DEVICE_TYPE_ID) > 0 then
+      if device.profile.components["importedEnergy"] ~= nil then
+        -- Profile has a dedicated importedEnergy component (electrical-meter, battery-storage)
         energyMeter_component    = "importedEnergy"
         powerConsumption_component = "importedEnergy"
       elseif #get_endpoints_for_dt(device, SOLAR_POWER_DEVICE_TYPE_ID) > 0 then
@@ -692,17 +664,33 @@ end
 
 local function energy_report_handler_factory(is_cumulative_report, cumulative_import_or_export_field)
   return function(driver, device, ib, response)
+    -- Guard 1: struct must be present
+    if not ib.data then
+      device.log.debug("Energy report: no data, skipping")
+      return
+    end
+    -- Augment before accessing elements (required for api < 11)
+    if version.api < 11 then
+      clusters.ElectricalEnergyMeasurement.types.EnergyMeasurementStruct:augment_type(ib.data)
+    end
+    -- Guard 2: energy value is nullable per spec
+    if not ib.data.elements or not ib.data.elements.energy
+        or ib.data.elements.energy.value == nil then
+      device.log.debug("Energy report: nil energy value, skipping")
+      return
+    end
+
     local report_type = is_cumulative_report and "Cumulative" or "Periodic"
     local energy_direction = cumulative_import_or_export_field == TOTAL_CUMULATIVE_ENERGY_EXPORTED and "Exported" or "Imported"
-    device.log.debug(string.format("%s Energy %s: EP=%d, Raw=%d mWh", 
+    device.log.debug(string.format("%s Energy %s: EP=%d, Raw=%d mWh",
       report_type, energy_direction, ib.endpoint_id, ib.data.elements.energy.value))
-    
-    if not ib.data then 
-      device.log.debug("Energy report: No data, skipping")
-      return 
-    end
-    if version.api < 11 then 
-      clusters.ElectricalEnergyMeasurement.types.EnergyMeasurementStruct:augment_type(ib.data) 
+
+    -- Use endSystime from the struct when available (Matter epoch-us → Unix epoch-s).
+    -- Falls back to os.time() when the field is absent or null.
+    local report_time = os.time()
+    local end_sys = ib.data.elements.endSystime
+    if end_sys and end_sys.value then
+      report_time = math.floor(end_sys.value / 1000000) + MATTER_EPOCH_OFFSET
     end
 
     local endpoint_id = string.format(ib.endpoint_id)
@@ -735,9 +723,38 @@ local function energy_report_handler_factory(is_cumulative_report, cumulative_im
       device:emit_component_event(device.profile.components[energyMeter_component], capabilities.energyMeter.energy({value = energy_to_emit, unit = "Wh"}))
     end
     if device.profile.components[powerConsumption_component] and device:supports_capability(capabilities.powerConsumptionReport) then
-      report_power_consumption_to_st_energy(device, device.profile.components[powerConsumption_component], energy_to_emit)
+      report_power_consumption_to_st_energy(device, device.profile.components[powerConsumption_component], energy_to_emit, report_time)
     end
   end
+end
+
+-- Handles CumulativeEnergyReset (attr 0x0005). Per spec, the device sends this whenever its
+-- cumulative counters are cleared (power outage, meter swap, counter overflow). We discard the
+-- stored running totals so the next cumulative report starts a fresh baseline, and we clear the
+-- 15-minute ST Energy timestamps so that baseline report is emitted immediately rather than
+-- waiting up to 15 minutes.
+local function cumulative_energy_reset_handler(driver, device, ib, response)
+  -- The CumulativeEnergyReset attribute is sent on every subscription poll with all-zero timestamps
+  -- when no actual reset has occurred. Only treat it as a real reset when at least one timestamp
+  -- is non-zero (spec: fields are epoch-seconds / epoch-microseconds since the last reset).
+  if not ib.data or not ib.data.elements then return end
+  local els = ib.data.elements
+  local any_nonzero = (els.imported_reset_timestamp and els.imported_reset_timestamp.value ~= 0)
+    or (els.exported_reset_timestamp and els.exported_reset_timestamp.value ~= 0)
+    or (els.imported_reset_systime   and els.imported_reset_systime.value   ~= 0)
+    or (els.exported_reset_systime   and els.exported_reset_systime.value   ~= 0)
+  if not any_nonzero then
+    device.log.debug("CumulativeEnergyReset: all timestamps zero — no actual reset, skipping")
+    return
+  end
+  device.log.info_with({ hub_logs = true }, "CumulativeEnergyReset received — clearing stored energy totals")
+  device:set_field(TOTAL_CUMULATIVE_ENERGY_IMPORTED, nil, { persist = true })
+  device:set_field(TOTAL_CUMULATIVE_ENERGY_EXPORTED, nil, { persist = true })
+  device:set_field(LAST_IMPORTED_REPORT_TIMESTAMP, nil, { persist = true })
+  device:set_field(LAST_EXPORTED_REPORT_TIMESTAMP, nil, { persist = true })
+  -- Clear per-component import timestamp variants (importedEnergy component key)
+  device:set_field(
+    string.format("%s_%s", LAST_IMPORTED_REPORT_TIMESTAMP, "importedEnergy"), nil, { persist = true })
 end
 
 local function active_power_handler(driver, device, ib, response)
@@ -810,6 +827,40 @@ local function active_current_handler(driver, device, ib, response)
     return
   end
   if not energy_utils.should_report(device, "__last_current_report", ib.endpoint_id) then
+    return -- throttle high-frequency reports
+  end
+  local current_A = current / 1000 -- convert mA to A
+  energy_utils.log_electrical(ib.endpoint_id, nil, current_A, nil)
+  device:emit_event_for_endpoint(
+    ib.endpoint_id,
+    capabilities.currentMeasurement.current({ value = current_A, unit = "A" })
+  )
+end
+
+local function rms_voltage_handler(driver, device, ib, response)
+  local voltage = ib.data.value
+  if voltage == nil then
+    device.log.debug("rms_voltage_handler: nil voltage value, skipping")
+    return
+  end
+  if not energy_utils.should_report(device, "__last_rms_voltage_report", ib.endpoint_id) then
+    return -- throttle high-frequency reports
+  end
+  local voltage_V = voltage / 1000 -- convert mV to V
+  energy_utils.log_electrical(ib.endpoint_id, voltage_V, nil, nil)
+  device:emit_event_for_endpoint(
+    ib.endpoint_id,
+    capabilities.voltageMeasurement.voltage({ value = voltage_V, unit = "V" })
+  )
+end
+
+local function rms_current_handler(driver, device, ib, response)
+  local current = ib.data.value
+  if current == nil then
+    device.log.debug("rms_current_handler: nil current value, skipping")
+    return
+  end
+  if not energy_utils.should_report(device, "__last_rms_current_report", ib.endpoint_id) then
     return -- throttle high-frequency reports
   end
   local current_A = current / 1000 -- convert mA to A
@@ -947,6 +998,8 @@ matter_driver_template = {
         [clusters.ElectricalPowerMeasurement.attributes.ActivePower.ID] = active_power_handler,
         [clusters.ElectricalPowerMeasurement.attributes.Voltage.ID] = voltage_handler,
         [clusters.ElectricalPowerMeasurement.attributes.ActiveCurrent.ID] = active_current_handler,
+        [clusters.ElectricalPowerMeasurement.attributes.RMSVoltage.ID] = rms_voltage_handler,
+        [clusters.ElectricalPowerMeasurement.attributes.RMSCurrent.ID] = rms_current_handler,
       },
       [clusters.EnergyEvseMode.ID] = {
         [clusters.EnergyEvseMode.attributes.SupportedModes.ID] = energy_evse_supported_modes_attr_handler,
@@ -961,6 +1014,7 @@ matter_driver_template = {
         [clusters.ElectricalEnergyMeasurement.attributes.PeriodicEnergyImported.ID] = energy_report_handler_factory(false, TOTAL_CUMULATIVE_ENERGY_IMPORTED),
         [clusters.ElectricalEnergyMeasurement.attributes.CumulativeEnergyExported.ID] = energy_report_handler_factory(true, TOTAL_CUMULATIVE_ENERGY_EXPORTED),
         [clusters.ElectricalEnergyMeasurement.attributes.PeriodicEnergyExported.ID] = energy_report_handler_factory(false, TOTAL_CUMULATIVE_ENERGY_EXPORTED),
+        [clusters.ElectricalEnergyMeasurement.attributes.CumulativeEnergyReset.ID] = cumulative_energy_reset_handler,
       },
       [clusters.PowerSource.ID] = {
         [clusters.PowerSource.attributes.BatPercentRemaining.ID] = battery_percent_remaining_attr_handler,
@@ -999,12 +1053,16 @@ matter_driver_template = {
     },
     [capabilities.voltageMeasurement.ID] = {
       clusters.ElectricalPowerMeasurement.attributes.Voltage,
+      clusters.ElectricalPowerMeasurement.attributes.RMSVoltage,
     },
     [capabilities.currentMeasurement.ID] = {
       clusters.ElectricalPowerMeasurement.attributes.ActiveCurrent,
+      clusters.ElectricalPowerMeasurement.attributes.RMSCurrent,
     },
     [capabilities.energyMeter.ID] = {
-      clusters.ElectricalEnergyMeasurement.attributes.PeriodicEnergyExported
+      clusters.ElectricalEnergyMeasurement.attributes.CumulativeEnergyImported,
+      clusters.ElectricalEnergyMeasurement.attributes.CumulativeEnergyExported,
+      clusters.ElectricalEnergyMeasurement.attributes.CumulativeEnergyReset,
     },
     [capabilities.battery.ID] = {
       clusters.PowerSource.attributes.BatPercentRemaining

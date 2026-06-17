@@ -17,6 +17,8 @@ function ElectricalPowerMeasurement:get_attribute_by_id(attr_id)
     [0x0004] = "Voltage",
     [0x0005] = "ActiveCurrent",
     [0x0008] = "ActivePower",
+    [0x000B] = "RMSVoltage",
+    [0x000C] = "RMSCurrent",
   }
   local attr_name = attr_id_map[attr_id]
   if attr_name ~= nil then
@@ -30,6 +32,8 @@ ElectricalPowerMeasurement.attribute_direction_map = {
   ["Voltage"] = "server",
   ["ActiveCurrent"] = "server",
   ["ActivePower"] = "server",
+  ["RMSVoltage"] = "server",
+  ["RMSCurrent"] = "server",
 }
 
 ElectricalPowerMeasurement.FeatureMap = ElectricalPowerMeasurement.types.Feature

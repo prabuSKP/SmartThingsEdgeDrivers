@@ -15,24 +15,13 @@ matterGeneric:
     deviceTypes:
       - id: 0x0018 #Battery Storage
     deviceProfileName: battery-storage
-  - id: "matter/electrical-sensor"
-    deviceLabel: Matter Electrical Sensor
-    deviceTypes:
-      - id: 0x0510 #Electrical Sensor (standalone, no EVSE)
-    deviceProfileName: electrical-sensor
   - id: "matter/electrical-meter"
     deviceLabel: Matter Electrical Meter
     deviceTypes:
       - id: 0x0514 #Electrical Meter
     deviceProfileName: electrical-meter
-  - id: "matter/dem-standalone"
-    deviceLabel: Matter Device Energy Management
-    deviceTypes:
-      - id: 0x050D #Device Energy Management
-    deviceProfileName: dem-standalone
   - id: "matter/electrical-utility-meter"
     deviceLabel: Matter Electrical Utility Meter
     deviceTypes:
       - id: 0x0511 #Electrical Utility Meter
-    deviceProfileName: electrical-utility-meter
-
+    deviceProfileName: electrical-meter
