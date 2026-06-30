@@ -32,12 +32,17 @@ function CameraLifecycleHandlers.device_init(driver, device)
   device:subscribe()
 
   -- [single_bridge spike] One-time: force a profile re-apply so the ONVIF credential
-  -- preferences added to camera.yml appear on an EXISTING camera. match_profile is
-  -- normally gated on the capability list changing, which does not trip when only
-  -- preferences are added — so force it once per device (on the next driver load).
-  if not device:get_field("onvif_prefs_applied_v1") then
-    device:set_field("onvif_prefs_applied_v1", true, { persist = true })
-    camera_cfg.match_profile(device, true)
+  -- preferences (added to camera.yml) appear on an EXISTING camera. Deferred a few
+  -- seconds so the device is fully initialised, and logged so we can confirm via logcat.
+  if not device:get_field("onvif_prefs_applied_v2") then
+    device:set_field("onvif_prefs_applied_v2", true, { persist = true })
+    device.thread:call_with_delay(3, function()
+      log.info_with({ hub_logs = true }, "[single_bridge spike] forcing camera profile re-apply; profile id=" ..
+        tostring(device.profile and device.profile.id))
+      local ok, err = pcall(function() camera_cfg.match_profile(device, true) end)
+      log.info_with({ hub_logs = true }, "[single_bridge spike] match_profile(force) ok=" .. tostring(ok) ..
+        " err=" .. tostring(err))
+    end)
   end
 end
 
@@ -59,6 +64,13 @@ function CameraLifecycleHandlers.driver_switched(driver, device)
 end
 
 function CameraLifecycleHandlers.info_changed(driver, device, event, args)
+  do -- [single_bridge spike] log what preferences the device actually has now
+    local p, keys = device.preferences or {}, {}
+    for k, _ in pairs(p) do keys[#keys + 1] = k end
+    log.info_with({ hub_logs = true }, "[single_bridge spike] info_changed: profile=" ..
+      tostring(device.profile and device.profile.id) .. " pref_keys=[" .. table.concat(keys, ",") ..
+      "] onvifUser=" .. tostring(p.onvifUser))
+  end
   local software_version_changed = device.matter_version ~= nil and args.old_st_store.matter_version ~= nil and
     device.matter_version.software ~= args.old_st_store.matter_version.software
   local profile_changed = not switch_utils.deep_equals(device.profile, args.old_st_store.profile, { ignore_functions = true })
