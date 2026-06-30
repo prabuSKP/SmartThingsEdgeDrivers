@@ -192,7 +192,10 @@ function CameraDeviceConfiguration.create_child_devices(driver, device)
   end
 end
 
-function CameraDeviceConfiguration.match_profile(device)
+-- `force` (single_bridge spike): re-apply the profile even when the capability list is
+-- unchanged. Needed because adding *preferences* (not capabilities) to camera.yml does not
+-- trip the optional-capabilities gate, so an existing camera would never pick them up.
+function CameraDeviceConfiguration.match_profile(device, force)
   local status_light_enabled_present, status_light_brightness_present = get_status_light_presence(device)
   local profile_update_requested = false
   local optional_supported_component_capabilities = {}
@@ -297,7 +300,7 @@ function CameraDeviceConfiguration.match_profile(device)
     table.insert(optional_supported_component_capabilities, {camera_fields.profile_components.doorbell, doorbell_component_capabilities})
   end
 
-  if camera_utils.optional_capabilities_list_changed(optional_supported_component_capabilities, device.profile.components) then
+  if force or camera_utils.optional_capabilities_list_changed(optional_supported_component_capabilities, device.profile.components) then
     profile_update_requested = true
     device:try_update_metadata({profile = "camera", optional_component_capabilities = optional_supported_component_capabilities})
     if #doorbell_endpoints > 0 then

@@ -30,6 +30,15 @@ function CameraLifecycleHandlers.device_init(driver, device)
   end
   device:extend_device("subscribe", camera_utils.subscribe)
   device:subscribe()
+
+  -- [single_bridge spike] One-time: force a profile re-apply so the ONVIF credential
+  -- preferences added to camera.yml appear on an EXISTING camera. match_profile is
+  -- normally gated on the capability list changing, which does not trip when only
+  -- preferences are added — so force it once per device (on the next driver load).
+  if not device:get_field("onvif_prefs_applied_v1") then
+    device:set_field("onvif_prefs_applied_v1", true, { persist = true })
+    camera_cfg.match_profile(device, true)
+  end
 end
 
 function CameraLifecycleHandlers.do_configure(driver, device)
