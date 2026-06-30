@@ -178,6 +178,10 @@ preferences:
       minLength: 0
       maxLength: 64
       default: ""
-metadata:
-  mnmn: SmartThingsEdge
-  vid: matter-camera
+# [single_bridge spike] The fixed `metadata: vid: matter-camera` was removed so
+# SmartThings AUTO-GENERATES the presentation from this profile (deviceConfig +
+# capabilities + PREFERENCES). A pinned published vid uses a fixed presentation that
+# does not surface profile preferences, which is why the ONVIF UserID/Password fields
+# did not appear in the camera's Settings. The deviceConfig above still drives the
+# camera UI (dashboard tile, live-view detail view, HMVS plugin). Restore the vid if
+# the auto-generated camera UI regresses.

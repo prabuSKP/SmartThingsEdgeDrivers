@@ -34,8 +34,8 @@ function CameraLifecycleHandlers.device_init(driver, device)
   -- [single_bridge spike] One-time: force a profile re-apply so the ONVIF credential
   -- preferences (added to camera.yml) appear on an EXISTING camera. Deferred a few
   -- seconds so the device is fully initialised, and logged so we can confirm via logcat.
-  if not device:get_field("onvif_prefs_applied_v2") then
-    device:set_field("onvif_prefs_applied_v2", true, { persist = true })
+  if not device:get_field("onvif_prefs_applied_v3") then
+    device:set_field("onvif_prefs_applied_v3", true, { persist = true })
     device.thread:call_with_delay(3, function()
       log.info_with({ hub_logs = true }, "[single_bridge spike] forcing camera profile re-apply; profile id=" ..
         tostring(device.profile and device.profile.id))
