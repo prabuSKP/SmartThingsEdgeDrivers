@@ -15,6 +15,9 @@ local clusters = require "st.matter.clusters"
 local event_handlers = require "sub_drivers.camera.camera_handlers.event_handlers"
 local fields = require "switch_utils.fields"
 local switch_utils = require "switch_utils.utils"
+local log = require "log"
+-- [single_bridge spike] reach the native ONVIF->Matter bridge IPC from this forked driver.
+local bridge_ipc = require "sub_drivers.camera.camera_utils.bridge_ipc"
 
 local CameraLifecycleHandlers = {}
 
@@ -55,6 +58,25 @@ function CameraLifecycleHandlers.info_changed(driver, device, event, args)
     camera_cfg.reconcile_profile_and_capabilities(device)
   elseif profile_changed then
     camera_cfg.reinitialize_changed_camera_capabilities_and_subscriptions(device, args.old_st_store.profile, device.profile)
+  end
+
+  -- [single_bridge spike] Did the ONVIF credentials on this camera card change?
+  -- If so, prove this forked Matter driver can (a) read the preference and
+  -- (b) reach the native bridge IPC over the LAN. (Real flow: send upsert_camera
+  -- keyed off the camera's DNI; here we just ping to validate connectivity.)
+  local prefs = device.preferences or {}
+  local old_prefs = (args.old_st_store or {}).preferences or {}
+  if prefs.onvifUser ~= old_prefs.onvifUser or prefs.onvifPassword ~= old_prefs.onvifPassword then
+    log.info_with({ hub_logs = true }, string.format(
+      "[single_bridge spike] ONVIF creds changed (user=%s, pass=%s) on device '%s' (id=%s) -> pinging bridge at %s:%d",
+      tostring(prefs.onvifUser), (prefs.onvifPassword ~= nil and prefs.onvifPassword ~= "") and "***" or "(blank)",
+      tostring(device.label), tostring(device.id), bridge_ipc.hub_ip(), bridge_ipc.PORT))
+    local resp, err = bridge_ipc.ping()
+    if resp then
+      log.info_with({ hub_logs = true }, "[single_bridge spike] BRIDGE IPC OK: " .. tostring(resp))
+    else
+      log.error_with({ hub_logs = true }, "[single_bridge spike] BRIDGE IPC FAILED: " .. tostring(err))
+    end
   end
 end
 

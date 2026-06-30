@@ -1,6 +1,7 @@
-name: 'Matter Switch'
-packageKey: 'matter-switch'
+name: 'Matter Switch (ONVIF)'
+packageKey: 'matter-switch-onvif'
 permissions:
   matter: {}
-description: "SmartThings driver for Matter switch devices"
+  lan: {}
+description: "Matter switch driver, forked to spike ONVIF credential entry on the camera card (single_bridge)."
 vendorSupportInformation: "https://support.smartthings.com"
