@@ -8,3 +8,28 @@ components:
         version: 1
     categories:
       - name: Bridges
+# [single_bridge] Default ONVIF credentials for the whole bridge. The daemon applies
+# these to any discovered camera that fails the anonymous resolve (needs a login).
+# This profile has no deviceConfig, so SmartThings auto-generates a presentation that
+# includes these preferences (unlike the camera card).
+preferences:
+  - name: onvifUser
+    title: "ONVIF USERID"
+    description: "One login applied to all cameras (blank = anonymous cameras only)"
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 64
+      default: ""
+  - name: onvifPassword
+    title: "ONVIF Password"
+    description: "One password applied to all cameras"
+    required: false
+    preferenceType: string
+    definition:
+      stringType: password
+      minLength: 0
+      maxLength: 64
+      default: ""

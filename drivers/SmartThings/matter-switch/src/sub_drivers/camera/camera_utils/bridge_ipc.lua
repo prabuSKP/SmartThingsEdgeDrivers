@@ -47,4 +47,27 @@ function M.ping()
   return M.send('{"v":1,"id":"single-bridge-spike","op":"ping"}')
 end
 
+-- Minimal JSON-string escape for the few user-entered fields.
+local function esc(s)
+  return (tostring(s or ""):gsub("\\", "\\\\"):gsub('"', '\\"'))
+end
+
+-- Spike: send an upsert_camera so the bridge LOGS it (adb-visible:
+-- "upsert dni=... onboarded on endpoint N"), proving the fork -> bridge path end to end.
+function M.upsert(cam)
+  local line = string.format(
+    '{"v":1,"id":"fork-spike","op":"upsert_camera","camera":{"dni":"%s","name":"%s","control_url":"%s","userid":"%s","password":"%s","stream":"%s"}}',
+    esc(cam.dni), esc(cam.name), esc(cam.control_url), esc(cam.userid), esc(cam.password), esc(cam.stream or "mainstream"))
+  return M.send(line)
+end
+
+-- [single_bridge] Set the one default ONVIF login applied to every camera. The daemon
+-- stores it and re-resolves all cameras with it (logs "set_default_creds ..." — adb-visible).
+function M.set_default_creds(user, pass)
+  local line = string.format(
+    '{"v":1,"id":"bridge-creds","op":"set_default_creds","userid":"%s","password":"%s"}',
+    esc(user), esc(pass))
+  return M.send(line)
+end
+
 return M

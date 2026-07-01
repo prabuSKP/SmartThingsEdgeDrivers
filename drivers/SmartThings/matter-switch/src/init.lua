@@ -65,6 +65,25 @@ function SwitchLifecycleHandlers.driver_switched(driver, device)
 end
 
 function SwitchLifecycleHandlers.info_changed(driver, device, event, args)
+  -- [single_bridge] Default ONVIF credentials changed on the Matter Bridge card ->
+  -- push the one login to the native daemon, which re-resolves every camera with it.
+  if switch_utils.detect_bridge(device) then
+    local p = device.preferences or {}
+    local op = (args.old_st_store or {}).preferences or {}
+    if p.onvifUser ~= op.onvifUser or p.onvifPassword ~= op.onvifPassword then
+      local bridge_ipc = require "sub_drivers.camera.camera_utils.bridge_ipc"
+      log.info_with({ hub_logs = true }, string.format(
+        "[single_bridge] default ONVIF creds changed (user=%s) -> set_default_creds to bridge %s:%d",
+        tostring(p.onvifUser), bridge_ipc.hub_ip(), bridge_ipc.PORT))
+      local resp, err = bridge_ipc.set_default_creds(p.onvifUser or "", p.onvifPassword or "")
+      if resp then
+        log.info_with({ hub_logs = true }, "[single_bridge] set_default_creds OK: " .. tostring(resp))
+      else
+        log.error_with({ hub_logs = true }, "[single_bridge] set_default_creds FAILED: " .. tostring(err))
+      end
+    end
+  end
+
   if not switch_utils.deep_equals(device.profile, args.old_st_store.profile, { ignore_functions = true }) then
     if device.network_type == device_lib.NETWORK_TYPE_MATTER then
       device:subscribe()
@@ -109,6 +128,15 @@ function SwitchLifecycleHandlers.device_init(driver, device)
     switch_utils.handle_electrical_sensor_info(device)
     device:extend_device("subscribe", switch_utils.subscribe)
     device:subscribe()
+
+    -- [single_bridge] One-time: re-apply the bridge profile so the default-ONVIF
+    -- credential preferences (added to matter-bridge.yml) appear on an existing bridge
+    -- card. matter-bridge has no deviceConfig, so its auto-generated presentation will
+    -- include them once re-applied.
+    if switch_utils.detect_bridge(device) and not device:get_field("onvif_bridge_prefs_v1") then
+      device:set_field("onvif_bridge_prefs_v1", true, { persist = true })
+      device:try_update_metadata({ profile = "matter-bridge" })
+    end
   end
 end
 
