@@ -25,10 +25,11 @@ function M.hub_ip()
 end
 
 -- Send one newline-terminated JSON line; return the response line, or nil + error.
-function M.send(line)
+-- Optional per-call timeout (seconds) overrides M.TIMEOUT for slow ops like discover.
+function M.send(line, timeout)
   local sock, err = socket.tcp()
   if not sock then return nil, "tcp: " .. tostring(err) end
-  sock:settimeout(M.TIMEOUT)
+  sock:settimeout(timeout or M.TIMEOUT)
 
   local ip = M.hub_ip()
   local ok, cerr = sock:connect(ip, M.PORT)
@@ -68,6 +69,14 @@ function M.set_default_creds(user, pass)
     '{"v":1,"id":"bridge-creds","op":"set_default_creds","userid":"%s","password":"%s"}',
     esc(user), esc(pass))
   return M.send(line)
+end
+
+-- [single_bridge] Ask the daemon to run a WS-Discovery LAN scan and onboard any new
+-- cameras (logs "discover found=.. added=.." — adb-visible). The scan blocks on the
+-- daemon (UDP multicast wait + a SOAP resolve per new camera), so it needs a longer
+-- timeout than the default 5 s ops.
+function M.discover()
+  return M.send('{"v":1,"id":"bridge-discover","op":"discover"}', 12)
 end
 
 return M

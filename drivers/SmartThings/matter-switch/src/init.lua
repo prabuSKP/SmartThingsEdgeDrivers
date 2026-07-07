@@ -144,6 +144,25 @@ function SwitchLifecycleHandlers.device_removed(driver, device)
   device.log.info("device removed")
 end
 
+-- [single_bridge] Pull-to-refresh (drag down) on the Matter Bridge card -> tell the native
+-- daemon to run a WS-Discovery LAN scan and onboard any newly found cameras. Only the
+-- bridge/parent card triggers a fleet scan; a per-camera refresh is a no-op here so an
+-- individual camera card doesn't kick off a whole-LAN rescan.
+local function handle_bridge_refresh(driver, device, cmd)
+  if not switch_utils.detect_bridge(device) then
+    return
+  end
+  local bridge_ipc = require "sub_drivers.camera.camera_utils.bridge_ipc"
+  log.info_with({ hub_logs = true }, string.format(
+    "[single_bridge] pull-to-refresh -> discover on bridge %s:%d", bridge_ipc.hub_ip(), bridge_ipc.PORT))
+  local resp, err = bridge_ipc.discover()
+  if resp then
+    log.info_with({ hub_logs = true }, "[single_bridge] discover OK: " .. tostring(resp))
+  else
+    log.warn_with({ hub_logs = true }, "[single_bridge] discover FAILED: " .. tostring(err))
+  end
+end
+
 local matter_driver_template = {
   lifecycle_handlers = {
     added = SwitchLifecycleHandlers.device_added,
@@ -343,6 +362,9 @@ local matter_driver_template = {
     [capabilities.operationalState.ID] = {
       [capabilities.operationalState.commands.pause.NAME] = capability_handlers.handle_operational_state_pause,
       [capabilities.operationalState.commands.resume.NAME] = capability_handlers.handle_operational_state_resume
+    },
+    [capabilities.refresh.ID] = {
+      [capabilities.refresh.commands.refresh.NAME] = handle_bridge_refresh,
     },
     [capabilities.statelessColorTemperatureStep.ID] = {
       [capabilities.statelessColorTemperatureStep.commands.stepColorTemperatureByPercent.NAME] = capability_handlers.handle_step_color_temperature_by_percent,
