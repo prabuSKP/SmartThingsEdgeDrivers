@@ -44,6 +44,17 @@ function CameraLifecycleHandlers.device_init(driver, device)
         " err=" .. tostring(err))
     end)
   end
+
+  -- [single_bridge] Cache the daemon-side camera dni: one-shot read of
+  -- BridgedDeviceBasicInformation.UniqueID (0x0039/0x0012), which the bridge sets to its
+  -- stable camera id (e.g. "onvif-mac-98eb03ed535f"). The response lands in
+  -- attribute_handlers.bridged_device_unique_id_handler, which persists it as
+  -- camera_fields.ONVIF_DNI for the removed handler below. Skip bridge cards: their
+  -- device record can leak camera endpoints into this sub-driver (see the endpoint
+  -- filtering note in test/test_matter_bridge.lua).
+  if not switch_utils.detect_bridge(device) and not device:get_field(camera_fields.ONVIF_DNI) then
+    camera_utils.read_bridged_device_unique_id(device)
+  end
 end
 
 function CameraLifecycleHandlers.do_configure(driver, device)
@@ -103,6 +114,70 @@ end
 
 function CameraLifecycleHandlers.added() end
 
+-- [single_bridge] The user deleted this camera card in the app -> tell the native daemon
+-- to drop the camera (bridged endpoint + cameras.json entry) so a later pull-to-refresh
+-- can re-onboard it fresh (the daemon's discovery dedup would otherwise say
+-- "already known" forever).
+function CameraLifecycleHandlers.device_removed(driver, device)
+  -- Never fire for the bridge card itself: its device record can leak camera endpoints
+  -- into this sub-driver (see the endpoint filtering note in test/test_matter_bridge.lua).
+  if switch_utils.detect_bridge(device) then return end
+
+  -- CRITICAL GUARD: when the WHOLE bridge is removed/unpaired, ST deletes the parent and
+  -- all its children together — firing per-child remove_camera then would wipe the
+  -- daemon's camera fleet and break the "commission with >=1 camera" rule on re-pair.
+  -- Only send when a bridge (Aggregator) device is still present in the driver's device
+  -- list. Ordering caveat: if ST removes the parent first, this also (correctly)
+  -- suppresses the trailing child removals; if a child were removed before the parent
+  -- during an unpair, its removal would still reach the daemon — re-onboarded by boot
+  -- discovery on re-commission. A second Matter bridge on this driver would also satisfy
+  -- this check; the guard is a heuristic, not proof this camera's own parent survives.
+  local bridge_present = false
+  for _, d in ipairs(driver:get_devices() or {}) do
+    if d.id ~= device.id and switch_utils.detect_bridge(d) then
+      bridge_present = true
+      break
+    end
+  end
+  if not bridge_present then
+    log.info_with({ hub_logs = true }, string.format(
+      "[single_bridge] camera '%s' removed with no bridge device left -> whole-bridge removal, keeping daemon fleet intact",
+      tostring(device.label)))
+    return
+  end
+
+  -- Preferred key: the cached UniqueID (= daemon dni). In practice hub-core does NOT
+  -- forward driver reads of BridgedDeviceBasicInformation, so the cache usually never
+  -- populates (verified on hub: READ sent, response never delivered). Fallback key: the
+  -- child's endpoint, which is the trailing number of its device_network_id
+  -- ("<fabric>-<node>-3" -> 3); the daemon owns the endpoint->dni mapping and resolves it.
+  local dni = device:get_field(camera_fields.ONVIF_DNI)
+  if type(dni) ~= "string" or dni == "" then dni = nil end
+  local endpoint = nil
+  if not dni then
+    local ep = tostring(device.device_network_id or ""):match("%-(%d+)%s*$")
+    endpoint = ep and tonumber(ep) or nil
+  end
+  if not dni and not endpoint then
+    log.warn_with({ hub_logs = true }, string.format(
+      "[single_bridge] camera '%s' removed but no cached dni AND no endpoint in device_network_id '%s' -> skipping remove_camera",
+      tostring(device.label), tostring(device.device_network_id)))
+    return
+  end
+
+  bridge_ipc.set_driver(driver) -- hub IP from environment_info.hub_ipv4 (dns self-lookup is unreliable in the sandbox)
+  log.info_with({ hub_logs = true }, string.format(
+    "[single_bridge] camera '%s' deleted in app -> remove_camera %s on bridge %s:%d",
+    tostring(device.label), dni and ("dni=" .. dni) or ("endpoint=" .. tostring(endpoint)),
+    bridge_ipc.hub_ip(), bridge_ipc.PORT))
+  local resp, err = bridge_ipc.remove_camera(dni, endpoint)
+  if resp then
+    log.info_with({ hub_logs = true }, "[single_bridge] remove_camera OK: " .. tostring(resp))
+  else
+    log.warn_with({ hub_logs = true }, "[single_bridge] remove_camera FAILED: " .. tostring(err))
+  end
+end
+
 local camera_handler = {
   NAME = "Camera Handler",
   lifecycle_handlers = {
@@ -110,7 +185,8 @@ local camera_handler = {
     infoChanged = CameraLifecycleHandlers.info_changed,
     doConfigure = CameraLifecycleHandlers.do_configure,
     driverSwitched = CameraLifecycleHandlers.driver_switched,
-    added = CameraLifecycleHandlers.added
+    added = CameraLifecycleHandlers.added,
+    removed = CameraLifecycleHandlers.device_removed
   },
   matter_handlers = {
     attr = {
@@ -169,6 +245,11 @@ local camera_handler = {
       [clusters.Chime.ID] = {
         [clusters.Chime.attributes.InstalledChimeSounds.ID] = attribute_handlers.installed_chime_sounds_handler,
         [clusters.Chime.attributes.SelectedChime.ID] = attribute_handlers.selected_chime_handler
+      },
+      -- [single_bridge] BridgedDeviceBasicInformation (0x0039) has no generated cluster in
+      -- this SDK, so UniqueID (0x0012) is registered by raw ids (see camera_fields).
+      [camera_fields.BridgedDeviceBasicInfoUniqueIDAttr.cluster] = {
+        [camera_fields.BridgedDeviceBasicInfoUniqueIDAttr.ID] = attribute_handlers.bridged_device_unique_id_handler
       }
     },
     event = {

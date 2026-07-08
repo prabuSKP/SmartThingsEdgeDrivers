@@ -338,4 +338,21 @@ function CameraUtils.subscribe(device)
   end
 end
 
+-- [single_bridge] One-shot READ of BridgedDeviceBasicInformation.UniqueID (0x0039/0x0012)
+-- on this camera's bridged endpoint. Read responses arrive as REPORT_DATA and dispatch
+-- through the same matter_handlers.attr table as subscription reports, so the response
+-- lands in attribute_handlers.bridged_device_unique_id_handler, which persists it as the
+-- daemon-side camera dni (camera_fields.ONVIF_DNI) used by the remove_camera IPC op.
+function CameraUtils.read_bridged_device_unique_id(device)
+  local im = require "st.matter.interaction_model"
+  local attr = camera_fields.BridgedDeviceBasicInfoUniqueIDAttr
+  -- Target the endpoint that serves cluster 0x0039 when the device record lists it;
+  -- fall back to a wildcard-endpoint read (nil) otherwise — hub-core scopes responses
+  -- to this device record's endpoints, same as the wildcard subscribe IBs above.
+  local eps = device:get_endpoints(attr.cluster)
+  local read_request = im.InteractionRequest(im.InteractionRequest.RequestType.READ, {})
+  read_request:with_info_block(im.InteractionInfoBlock(eps[1], attr.cluster, attr.ID))
+  device:send(read_request)
+end
+
 return CameraUtils

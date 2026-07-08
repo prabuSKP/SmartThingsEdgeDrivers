@@ -21,6 +21,14 @@ CameraFields.CameraAVSMFeatureMapAttr = { ID = 0xFFFC, cluster = clusters.Camera
 CameraFields.CameraAVSULMFeatureMapAttr = { ID = 0xFFFC, cluster = clusters.CameraAvSettingsUserLevelManagement.ID }
 CameraFields.ZoneManagementFeatureMapAttr = { ID = 0xFFFC, cluster = clusters.ZoneManagement.ID }
 
+-- [single_bridge] The ONVIF->Matter daemon's stable camera id (e.g. "onvif-mac-<12hex>"),
+-- cached from BridgedDeviceBasicInformation.UniqueID so app-side deletion of this camera
+-- card can tell the daemon which camera to drop (remove_camera IPC).
+CameraFields.ONVIF_DNI = "onvif_dni"
+-- BridgedDeviceBasicInformation (0x0039) has no generated cluster in this SDK's
+-- zap_clusters, so its UniqueID (0x0012) attribute is addressed by raw ids.
+CameraFields.BridgedDeviceBasicInfoUniqueIDAttr = { ID = 0x0012, cluster = 0x0039 }
+
 CameraFields.PAN_IDX = "PAN"
 CameraFields.TILT_IDX = "TILT"
 CameraFields.ZOOM_IDX = "ZOOM"

@@ -7,6 +7,7 @@ local capabilities = require "st.capabilities"
 local clusters = require "st.matter.clusters"
 local camera_cfg = require "sub_drivers.camera.camera_utils.device_configuration"
 local fields = require "switch_utils.fields"
+local log = require "log"
 local utils = require "st.utils"
 
 local CameraAttributeHandlers = {}
@@ -473,6 +474,19 @@ end
 
 function CameraAttributeHandlers.camera_feature_map_handler(driver, device, ib, response)
   camera_cfg.reconcile_profile_and_capabilities(device)
+end
+
+-- [single_bridge] BridgedDeviceBasicInformation.UniqueID (0x0039/0x0012) is the native
+-- daemon's stable camera dni (e.g. "onvif-mac-98eb03ed535f"). Cache it (persisted) so
+-- deleting this camera card in the app can tell the daemon which camera to drop via the
+-- remove_camera IPC op (see the camera sub-driver's removed lifecycle handler).
+function CameraAttributeHandlers.bridged_device_unique_id_handler(driver, device, ib, response)
+  local dni = ib.data.value
+  if type(dni) == "string" and dni ~= "" then
+    device:set_field(camera_fields.ONVIF_DNI, dni, { persist = true })
+    log.info_with({ hub_logs = true }, string.format(
+      "[single_bridge] cached onvif dni=%s for camera '%s'", dni, tostring(device.label)))
+  end
 end
 
 return CameraAttributeHandlers
