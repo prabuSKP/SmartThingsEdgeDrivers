@@ -72,6 +72,7 @@ function SwitchLifecycleHandlers.info_changed(driver, device, event, args)
     local op = (args.old_st_store or {}).preferences or {}
     if p.onvifUser ~= op.onvifUser or p.onvifPassword ~= op.onvifPassword then
       local bridge_ipc = require "sub_drivers.camera.camera_utils.bridge_ipc"
+      bridge_ipc.set_driver(driver) -- hub IP from environment_info.hub_ipv4 (dns self-lookup is unreliable in the sandbox)
       log.info_with({ hub_logs = true }, string.format(
         "[single_bridge] default ONVIF creds changed (user=%s) -> set_default_creds to bridge %s:%d",
         tostring(p.onvifUser), bridge_ipc.hub_ip(), bridge_ipc.PORT))
@@ -153,6 +154,7 @@ local function handle_bridge_refresh(driver, device, cmd)
     return
   end
   local bridge_ipc = require "sub_drivers.camera.camera_utils.bridge_ipc"
+  bridge_ipc.set_driver(driver) -- hub IP from environment_info.hub_ipv4 (dns self-lookup is unreliable in the sandbox)
   log.info_with({ hub_logs = true }, string.format(
     "[single_bridge] pull-to-refresh -> discover on bridge %s:%d", bridge_ipc.hub_ip(), bridge_ipc.PORT))
   local resp, err = bridge_ipc.discover()
