@@ -51,6 +51,6 @@ return {
   --
   -- => Teach your AC with LEARN MODE instead. One code per combination you actually use, keyed
   --    "<mode>_<setpoint>_<fan>" (e.g. "cool_24_auto"), plus "power_off" for Off.
-  --    See broadlink-rm4-USER_GUIDE.md, "Teaching an air conditioner".
+  --    See docs/broadlink-rm4/USER_GUIDE.md, "Teaching an air conditioner".
   ac = {},
 }

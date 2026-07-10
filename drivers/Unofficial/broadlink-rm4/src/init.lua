@@ -1,6 +1,6 @@
 -- src/init.lua
 --
--- BroadLink RM4 driver — stock-capabilities model (see broadlink-rm4-SHIPPING_PLAN-STOCK-CAPS.md).
+-- BroadLink RM4 driver — stock-capabilities model (see docs/broadlink-rm4/SHIPPING_PLAN-STOCK-CAPS.md).
 --   * The RM4 blaster is a LAN parent; each appliance is an EDGE_CHILD of a known TYPE
 --     (tv / ac / fan / media / generic), each mapped to a fixed profile of STOCK capabilities.
 --   * Stock command -> code slot mapping is fixed here; the driver blasts the stored hex.
