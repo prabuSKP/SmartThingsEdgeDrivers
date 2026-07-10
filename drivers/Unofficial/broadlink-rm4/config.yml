@@ -1,0 +1,7 @@
+name: 'BroadLink RM4'
+packageKey: 'broadlink-rm4'
+permissions:
+  lan: {}
+  discovery: {}
+description: "SmartThings Edge driver for the BroadLink RM4 Mini Wi-Fi IR blaster. Controls TVs, ACs and other IR appliances over the LAN with no cloud. Ported from the python-broadlink protocol; AES is pure-Lua."
+vendorSupportInformation: "https://support.smartthings.com"

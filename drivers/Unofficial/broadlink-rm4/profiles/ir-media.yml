@@ -1,0 +1,24 @@
+name: ir-media
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: mediaPlayback
+        version: 1
+      - id: mediaTrackControl
+        version: 1
+      - id: tvChannel
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: Television
+preferences:
+  - name: learnMode
+    title: "Learn mode"
+    description: "ON = the next control you tap RECORDS from your remote instead of sending. Turn OFF when done."
+    required: false
+    preferenceType: boolean
+    definition:
+      default: false

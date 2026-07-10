@@ -1,0 +1,24 @@
+name: ir-ac
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: thermostatMode
+        version: 1
+      - id: thermostatCoolingSetpoint
+        version: 1
+      - id: airConditionerFanMode
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: AirConditioner
+preferences:
+  - name: learnMode
+    title: "Learn mode"
+    description: "ON = the next control you tap RECORDS from your remote instead of sending. Each mode+temperature+fan combination is a separate code. Turn OFF when done."
+    required: false
+    preferenceType: boolean
+    definition:
+      default: false

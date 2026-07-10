@@ -1,0 +1,32 @@
+name: rm4-hub
+components:
+  - id: main
+    capabilities:
+      - id: refresh
+        version: 1
+    categories:
+      - name: RemoteController
+preferences:
+  - name: applianceType
+    title: "Appliance type to add"
+    description: "Pick the type, then set a name below and Save to create the appliance."
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        tv: "TV"
+        ac: "Air Conditioner"
+        fan: "Fan"
+        media: "Media / Set-top box"
+        generic: "Generic"
+      default: "tv"
+  - name: applianceName
+    title: "Appliance name (Save to add)"
+    description: "Type a name (e.g. Living Room TV) and Save — a new appliance of the chosen type is created. Use a different name to add another."
+    required: false
+    preferenceType: string
+    definition:
+      stringType: text
+      minLength: 0
+      maxLength: 40
+      default: ""

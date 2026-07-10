@@ -1,0 +1,34 @@
+name: ir-generic
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: RemoteController
+  - id: button1
+    capabilities:
+      - id: momentary
+        version: 1
+  - id: button2
+    capabilities:
+      - id: momentary
+        version: 1
+  - id: button3
+    capabilities:
+      - id: momentary
+        version: 1
+  - id: button4
+    capabilities:
+      - id: momentary
+        version: 1
+preferences:
+  - name: learnMode
+    title: "Learn mode"
+    description: "ON = the next control (switch or Button 1-4) you tap RECORDS from your remote instead of sending. Turn OFF when done."
+    required: false
+    preferenceType: boolean
+    definition:
+      default: false

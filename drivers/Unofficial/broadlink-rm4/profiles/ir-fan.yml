@@ -1,0 +1,22 @@
+name: ir-fan
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: fanSpeed
+        version: 1
+      - id: fanOscillationMode
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: Fan
+preferences:
+  - name: learnMode
+    title: "Learn mode"
+    description: "ON = the next control you tap RECORDS from your remote instead of sending. Turn OFF when done."
+    required: false
+    preferenceType: boolean
+    definition:
+      default: false

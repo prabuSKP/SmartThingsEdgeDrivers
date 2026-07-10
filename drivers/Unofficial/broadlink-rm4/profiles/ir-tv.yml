@@ -1,0 +1,36 @@
+name: ir-tv
+components:
+  - id: main
+    capabilities:
+      - id: switch
+        version: 1
+      - id: audioVolume
+        version: 1
+      - id: audioMute
+        version: 1
+      - id: tvChannel
+        version: 1
+      - id: mediaPlayback
+        version: 1
+      - id: refresh
+        version: 1
+    categories:
+      - name: Television
+preferences:
+  - name: learnMode
+    title: "Learn mode"
+    description: "ON = the next control you tap RECORDS from your remote instead of sending. Point the remote at the RM4 and press. Turn OFF when done."
+    required: false
+    preferenceType: boolean
+    definition:
+      default: false
+  - name: powerStyle
+    title: "Power style"
+    description: "How the Power switch works. TOGGLE = one code that flips power (needed by most Samsung smart monitors, e.g. M5). DISCRETE = separate On/Off codes (some TVs)."
+    required: false
+    preferenceType: enumeration
+    definition:
+      options:
+        toggle: "Toggle (recommended for monitors)"
+        discrete: "Discrete On/Off"
+      default: toggle
