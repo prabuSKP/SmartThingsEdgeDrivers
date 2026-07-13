@@ -3,7 +3,7 @@
 Local, hub-native control of a BroadLink RM4 Mini Wi-Fi IR blaster — TVs, ACs, fans and other
 IR devices, over the LAN, no cloud. Protocol ported from `python-broadlink`; AES is pure Lua.
 
-**Docs:** [User Guide](../../../docs/broadlink-rm4/USER_GUIDE.md) · [Testing](../../../docs/broadlink-rm4/TESTING.md) ·
+**Docs:** [Architecture](../../../docs/broadlink-rm4/ARCHITECTURE.md) · [User Guide](../../../docs/broadlink-rm4/USER_GUIDE.md) · [Testing](../../../docs/broadlink-rm4/TESTING.md) ·
 [Expected logs](../../../docs/broadlink-rm4/EXPECTED_LOGS.md) · [Protocol flow](../../../docs/broadlink-rm4/PROTOCOL_FLOW.md) ·
 [Known gaps](../../../docs/broadlink-rm4/GAPS.md) ·
 Shipping plans: [stock-caps (implemented)](../../../docs/broadlink-rm4/SHIPPING_PLAN-STOCK-CAPS.md) ·
@@ -57,13 +57,13 @@ broadlink-rm4/
 ├── profiles/  rm4-hub · ir-tv · ir-ac · ir-fan · ir-media · ir-generic
 └── src/
     ├── init.lua        driver: typed children, stock-cap handlers, Learn mode, add/remove,
-    │                   health, IP refresh, cloud-lock
+    │                   card state seeding, health, IP refresh, cloud-lock
     ├── discovery.lua   UDP broadcast (+ directed + unicast fallback) discovery
-    ├── broadlink.lua   protocol: framing, login (0x65), send (0x6a), learn
+    ├── broadlink.lua   protocol: rmminib framing, login (0x65), send/learn (0x6a), errcode checks
     ├── crypto.lua      byte-array wrapper over the vendored AES
     ├── code_store.lua  per-device code storage (+ codes.lua fallback)
     ├── utils.lua       byte/checksum/hex helpers
-    ├── codes.lua       optional dev seed codes
+    ├── codes.lua       bundled Samsung TV seed codes (fallback; AC/fan/media/generic are learn-only)
     ├── vendor/aes.lua  self-contained pure-Lua AES-128-CBC
     └── test/           offline_crypto_test · offline_code_store_test
 ```

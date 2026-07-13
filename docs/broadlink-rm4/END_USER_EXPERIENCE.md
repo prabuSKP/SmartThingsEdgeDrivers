@@ -82,8 +82,8 @@ Repeat per button. (Plan Phase 1.1–1.3.)
 IR is **one-way**. The app can confirm the command was *sent*, never that the appliance
 *obeyed*. So a tile flipping "On" means "we blasted the on-code," not a guaranteed "the TV is
 on." If the TV was blocked or someone used the physical remote, the app's view can drift.
-This is a property of infrared, not something any phase can fix. See
-`ir-fundamentals.md` §3.
+This is a property of infrared, not something any phase can fix — the driver mitigates it by
+seeding sensible starting values and updating optimistically, but the card can still drift.
 
 ---
 
