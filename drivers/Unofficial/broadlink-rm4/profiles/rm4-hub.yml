@@ -5,7 +5,7 @@ components:
       - id: refresh
         version: 1
     categories:
-      - name: RemoteController
+      - name: Bridges
 preferences:
   - name: applianceType
     title: "Appliance type to add"
