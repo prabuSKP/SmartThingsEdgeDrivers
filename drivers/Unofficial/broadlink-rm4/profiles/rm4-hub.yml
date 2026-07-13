@@ -14,12 +14,13 @@ preferences:
     preferenceType: enumeration
     definition:
       options:
-        tv: "TV"
+        # Only AC / TV / Generic are offered in the app. The `fan` and `media` profiles and
+        # their handlers are intentionally retained in the driver (init.lua PROFILE, ir-fan.yml,
+        # ir-media.yml) but hidden here — re-add the options below to expose them again.
         ac: "Air Conditioner"
-        fan: "Fan"
-        media: "Media / Set-top box"
+        tv: "TV"
         generic: "Generic"
-      default: "tv"
+      default: "ac"
   - name: applianceName
     title: "Appliance name (Save to add)"
     description: "Type a name (e.g. Living Room TV) and Save — a new appliance of the chosen type is created. Use a different name to add another."

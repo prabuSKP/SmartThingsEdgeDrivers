@@ -13,6 +13,8 @@ is a port of `python-broadlink`; AES-128-CBC is pure Lua (`src/vendor/aes.lua`).
   + **typed `EDGE_CHILD` appliances** (`tv/ac/fan/media/generic`), each a fixed profile of **stock**
   capabilities. Onboarding creates **only the parent**; appliances are added by setting a
   type+name in the parent's Settings and Saving (`info_changed` → `create_child`).
+  Note: all five types work in code, but the add-menu (`applianceType` enum in `rm4-hub.yml`)
+  currently exposes only **tv / ac / generic** — `fan`/`media` are retained but hidden.
 - Type is encoded in `parent_assigned_child_key = "<type>-<name>"` and read by `appliance_type()`.
 - A tap → `capability_handlers[cap][cmd]` → resolves a **code slot** → `action(device, slot, thunk)`:
   `learnMode` ON = record the slot, OFF = send it then emit the optimistic event.
