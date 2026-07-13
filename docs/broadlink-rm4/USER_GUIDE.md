@@ -42,10 +42,10 @@ If nothing is found, see [Troubleshooting](#troubleshooting).
 
 ## 3. Add your appliances
 
-Each real device (a TV, an AC, a fan…) becomes its own tile. To add one:
+Each real device (a TV, an AC…) becomes its own tile. To add one:
 
 1. Open the **BroadLink RM4** tile → **⋮ → Settings**.
-2. Choose the **Appliance type** (TV / Air Conditioner / Fan / Media box / Generic).
+2. Choose the **Appliance type** (Air Conditioner / TV / Generic — Air Conditioner is the default).
 3. Type an **Appliance name** (e.g. "Living Room TV") and **Save**.
 4. After a short moment (it can take up to ~1–2 minutes) a new tile with that name appears —
    that's your appliance.
@@ -106,9 +106,11 @@ That's it — now every control **sends** instead of records.
 |---|---|
 | **TV** | Power, Volume Up/Down, Mute, Channel Up/Down, Play/Pause/Stop, Fast-forward/Rewind |
 | **Air Conditioner** | Power, Mode (cool/heat/auto/off), Temperature, Fan mode — *no bundled codes; see "Teaching an air conditioner" below* |
-| **Fan** | Power, Speed, Oscillate |
-| **Media box** | Power, Play/Pause/Stop, Next/Previous, Channel Up/Down |
 | **Generic** | Power on/off + Button 1–4 (teach any four buttons you like) |
+
+> The **Add** menu currently offers only TV, Air Conditioner and Generic. **Generic** covers most
+> other appliances — its Power + four buttons can learn any remote's buttons. (The driver also
+> contains **Fan** and **Media box** types, kept for the future but not shown in the menu.)
 
 ### Teaching an air conditioner
 

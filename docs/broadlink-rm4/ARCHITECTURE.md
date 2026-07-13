@@ -44,17 +44,21 @@ BroadLink RM4 (LAN parent, profile rm4-hub)         one per physical blaster
 - **Adding an appliance is preference-driven:** on the parent, set a type + name in Settings and
   Save. `info_changed` sees the new `applianceName` and calls `create_child`. (A `momentary` Add
   button was tried first but doesn't render on a LAN parent — see [GAPS.md](GAPS.md) G2.)
+- **The add-menu (`applianceType` enum in `rm4-hub.yml`) currently exposes only `tv` / `ac` /
+  `generic`.** `fan` and `media` are fully implemented (profiles + handlers + `PROFILE` map) but
+  intentionally hidden from the dropdown; re-adding their two option lines re-exposes them.
 
 Each type maps to a fixed profile of **stock** SmartThings capabilities (no custom capabilities),
-so cards render natively:
+so cards render natively. All five profiles exist in the driver; only the first three and
+`generic` are offered in the add-menu today (see note above):
 
-| Type | Profile | Stock capabilities |
-|---|---|---|
-| tv | `ir-tv` | switch, audioVolume, audioMute, tvChannel, mediaPlayback, refresh |
-| ac | `ir-ac` | switch, thermostatMode, thermostatCoolingSetpoint, airConditionerFanMode, refresh |
-| fan | `ir-fan` | switch, fanSpeed, fanOscillationMode, refresh |
-| media | `ir-media` | switch, mediaPlayback, mediaTrackControl, tvChannel, refresh |
-| generic | `ir-generic` | switch, momentary ×4 (button1..4), refresh |
+| Type | Profile | In add-menu | Stock capabilities |
+|---|---|---|---|
+| tv | `ir-tv` | ✅ | switch, audioVolume, audioMute, tvChannel, mediaPlayback, refresh |
+| ac | `ir-ac` | ✅ | switch, thermostatMode, thermostatCoolingSetpoint, airConditionerFanMode, refresh |
+| fan | `ir-fan` | ⛔ hidden | switch, fanSpeed, fanOscillationMode, refresh |
+| media | `ir-media` | ⛔ hidden | switch, mediaPlayback, mediaTrackControl, tvChannel, refresh |
+| generic | `ir-generic` | ✅ | switch, momentary ×4 (button1..4), refresh |
 
 Every child profile also carries a boolean **`learnMode`** preference; the TV profile adds a
 **`powerStyle`** enum (`toggle` default / `discrete`).
