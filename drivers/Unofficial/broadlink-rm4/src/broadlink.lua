@@ -208,7 +208,7 @@ function Device:check_learned()
   local ir = {}
   for i = 0x06 + 1, last do ir[#ir + 1] = dec[i] end
   log.info_with({hub_logs = true}, string.format(
-    "[BroadLink] check_learned: captured %d IR bytes", #ir))
+    "[BroadLink] check_learned: captured %d IR bytes : %s", #ir, utils.bytes_to_hex(ir)))
   return ir
 end
 

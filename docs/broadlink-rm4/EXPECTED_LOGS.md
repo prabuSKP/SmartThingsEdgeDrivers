@@ -69,11 +69,16 @@ INFO   [BroadLink] logged in to RM4 192.168.1.50
 
 ### 1.5 Sending a code (tap a TV/appliance child's switch On)
 ```
-INFO   [BroadLink] send_ir: 148 IR bytes -> 192.168.1.50 : 2600b400...0d05
-INFO   [BroadLink] TX cmd=0x6a 216 bytes: 5aa5aa55...
-INFO   [BroadLink] -> 192.168.1.50:80 cmd=0x6a len=216 (try 1/3)
+INFO   [BroadLink] SEND: tv/power_on (74 bytes) : 2600460093931237...000d05
+INFO   [BroadLink] send_ir: 74 IR bytes -> 192.168.1.50 : 2600460093931237...000d05
+INFO   [BroadLink] TX cmd=0x6a 136 bytes: 5aa5aa55...
+INFO   [BroadLink] -> 192.168.1.50:80 cmd=0x6a len=136 (try 1/3)
 INFO   [BroadLink] <- 192.168.1.50 reply len=16 errcode=0
 ```
+> **`SEND: <appliance_type>/<slot> (<size> bytes) : <hex>`** is the new IR audit line — it
+> identifies **which button** (slot) on **which appliance** (type) was tapped, plus the full IR
+> hex being blasted. Every IR send now starts with this line.
+>
 > **`errcode=0` is the pass signal** — the RM4 accepted the packet and blasted the IR. The
 > appliance should physically react, and the switch tile flips to On (optimistic — it flips
 > because the code was sent, not because the appliance confirmed anything). A non-zero errcode
@@ -119,11 +124,21 @@ INFO   [BroadLink] seeded initial state for tv child 'Living room 3' (app displa
 
 ### 1.8 Learning a code (Learn mode ON → tap a control → press the remote)
 ```
+INFO   [BroadLink] LEARN START: tv/vol_up
 INFO   [BroadLink] LEARN: capturing 'vol_up' — point the remote at the RM4 and press now
+INFO   [BroadLink] enter_learning on 192.168.1.50
+INFO   [BroadLink] TX cmd=0x6a 16 bytes: 5aa5aa55...
 INFO   [BroadLink] -> 192.168.1.50:80 cmd=0x6a len=16 (try 1/3)     (enter-learning, then repeated check polls)
 INFO   [BroadLink] <- 192.168.1.50 reply len=... errcode=0
+INFO   [BroadLink] check_learned: captured 148 IR bytes : 2600b40093931237...0d05
 INFO   [BroadLink] LEARN OK: 'vol_up' (148 bytes) : 2600b40093931237...0d05
 ```
+> **`LEARN START: <appliance_type>/<slot>`** is the new learn audit line — it identifies which
+> appliance type and slot is about to be captured, before the learning begins.
+>
+> **`check_learned: captured N IR bytes : <hex>`** now includes the full IR hex at the protocol
+> layer, not just the byte count. This ensures every captured code is visible even if the caller
+> doesn't log it, and mirrors the `send_ir` hex-dump format.
 > No status shows in the app — `LEARN OK` in the log (or the control working afterward) is your
 > confirmation. Nothing captured within ~15 s logs `WARN [BroadLink] LEARN timeout for 'vol_up'
 > (no IR received)`. While learning, the driver polls `check_learned` (~1/s), so you'll see
@@ -154,9 +169,10 @@ INFO   [BroadLink] -> 192.168.1.50:80 cmd=0x65 len=136 (try 1/3)
 INFO   [BroadLink] <- 192.168.1.50 reply len=88 errcode=0
 INFO   [BroadLink] login OK, device id=1a2b3c4d
 INFO   [BroadLink] logged in to RM4 192.168.1.50
-INFO   [BroadLink] send_ir: 148 IR bytes -> 192.168.1.50 : 2600b400...0d05
-INFO   [BroadLink] TX cmd=0x6a 216 bytes: 5aa5aa55...
-INFO   [BroadLink] -> 192.168.1.50:80 cmd=0x6a len=216 (try 1/3)
+INFO   [BroadLink] SEND: tv/power_on (74 bytes) : 260046009393...000d05
+INFO   [BroadLink] send_ir: 74 IR bytes -> 192.168.1.50 : 260046009393...000d05
+INFO   [BroadLink] TX cmd=0x6a 136 bytes: 5aa5aa55...
+INFO   [BroadLink] -> 192.168.1.50:80 cmd=0x6a len=136 (try 1/3)
 INFO   [BroadLink] <- 192.168.1.50 reply len=16 errcode=0
 ```
 
@@ -392,6 +408,7 @@ landing one degree off.
 | You see… | It means | Case |
 |---|---|---|
 | `login OK, device id=...` | Framing/checksums/MAC/AES-with-initial-key correct (not yet the send format) | success 1.4 |
+| `SEND: <type>/<slot> (N bytes) : <hex>` | A button was tapped; this IR code is about to be blasted | success 1.5 |
 | `send_ir ...` + `<- reply ... errcode=0` | Blaster emitted the code (appliance not confirmed) | success 1.5 / F12 |
 | `send_ir REJECTED ... errcode=65531` (-5) | RM4 refused the send — wrong payload framing (or locked) | F5b |
 | `discovery loop ended (0 RM4 seen)` | Nothing replied to the broadcast | F2 |
@@ -399,6 +416,8 @@ landing one degree off.
 | `login rejected, error code N` (+ CLOUD-LOCKED line) | Device refused login (cloud-lock?) | F5 |
 | `add appliance: type=... name=...` | A typed child (TV/AC/…) was created | success 1.7 |
 | `seeded initial state for <type> child '...'` | Child init emitted optimistic display values (no IR) | success 1.7b |
+| `LEARN START: <type>/<slot>` | Learn mode capture begins for this appliance type + slot | success 1.8 |
+| `check_learned: captured N IR bytes : <hex>` | IR code captured at the protocol layer (full hex now logged) | success 1.8 |
 | `LEARN OK: '<slot>' (N bytes) : <hex>` | Some IR was captured & stored — **not** proof it's the *right* code | success 1.8 / F14 |
 | `LEARN store failed for '<slot>' … captured code was: <hex>` | Couldn't store it (e.g. 40-code limit); blob preserved in the log | success 1.8 |
 | `LEARN timeout for '<slot>'` | Nothing captured in ~15 s | success 1.8 |

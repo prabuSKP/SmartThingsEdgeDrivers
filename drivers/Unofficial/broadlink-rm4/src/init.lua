@@ -120,6 +120,8 @@ local function send_slot(driver, device, slot)
   local h = get_handle(driver, device)
   if not h then return false end
   local ir = utils.hex_to_bytes(hex)
+  log.info_with({ hub_logs = true }, string.format(
+    "[BroadLink] SEND: %s/%s (%d bytes) : %s", appliance_type(device), slot, #ir, hex))
   local ok = with_lock(rm4.id, function()
     if h:send_ir(ir) then return true end
     handles[rm4.id] = nil
@@ -135,6 +137,8 @@ local function learn_slot(driver, device, slot)
   local rm4 = rm4_device(device)
   local h = get_handle(driver, device)
   if not h then return false end
+  log.info_with({ hub_logs = true }, string.format(
+    "[BroadLink] LEARN START: %s/%s", appliance_type(device), slot))
   log.info_with({ hub_logs = true }, "[BroadLink] LEARN: capturing '" .. slot .. "' — point the remote at the RM4 and press now")
   return with_lock(rm4.id, function()
     h:enter_learning()
